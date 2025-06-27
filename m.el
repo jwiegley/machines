@@ -6,6 +6,19 @@
 
 (require 'ts-queue)
 
+(defun m--drain-queue (input)
+  "Drain the INPUT queue and return the list of its values."
+  (cl-loop for x = (ts-queue-pop input)
+           until (ts-queue-at-eof x)
+           collect x))
+
+(defun m--connect (input output)
+  "Drain the INPUT queue into the OUTPUT queue."
+  (cl-loop for x = (ts-queue-pop input)
+           until (ts-queue-at-eof x)
+           do (ts-queue-push output x)
+           finally (ts-queue-close output)))
+
 (cl-defstruct
     (machine
      (:copier nil)
@@ -14,13 +27,8 @@
       m-create
       (&key (input (ts-queue-create))
             (output (ts-queue-create))
-            (thread
-             (make-thread
-              #'(lambda ()
-                  (cl-loop for x = (ts-queue-pop input)
-                           until (ts-queue-at-eof x)
-                           do (ts-queue-push output x)
-                           finally (ts-queue-close output))))))))
+            (thread (make-thread
+                     #'(lambda () (m--connect input output)))))))
   "Machines map INPUT to OUTPUT by executing code in THREAD.
 Note that INPUT may be either a single queue or a vector of queues, it
 all depends on the machine and how it draws its input. Likewise,
@@ -49,6 +57,10 @@ finished, after which it should close the output queue using
 (defun m-peek (machine)
   "Await the next results from the given MACHINE."
   (ts-queue-peek (machine-output machine)))
+
+(defun m-drain (machine)
+  "Drain the output of MACHINE into a list."
+  (m--drain-queue (machine-output machine)))
 
 (defun m-output-closed-p (machine)
   "Return non-nil if the MACHINE's output queue has been closed.
@@ -110,12 +122,13 @@ FUNC."
      :thread
      (make-thread
       #'(lambda ()
-          (let ((xs (cl-loop for x = (ts-queue-pop input)
-                             until (ts-queue-at-eof x)
-                             collect x)))
-            (let ((result (funcall func (funcall combine xs))))
-              (ts-queue-push output result))
-            (ts-queue-close output)))))))
+          (thread-last
+            input
+            m--drain-queue
+            (funcall combine)
+            (funcall func)
+            (ts-queue-push output))
+          (ts-queue-close output))))))
 
 (ert-deftest m-funcall-test ()
   (let ((m (m-funcall #'+ :combine (apply-partially #'cl-reduce #'+))))
@@ -198,65 +211,83 @@ FUNC."
     (should (string= "2\n" (m-await m)))
     (should (m-output-closed-p m))))
 
-;; (cl-defun m-gptel (&optional
-;;                    prompt
-;;                    &key
-;;                    callback
-;;                    (buffer (current-buffer))
-;;                    position
-;;                    context
-;;                    dry-run
-;;                    (stream nil)
-;;                    (in-place nil)
-;;                    (system gptel--system-message)
-;;                    transforms
-;;                    (fsm (gptel-make-fsm)))
-;;   "Create a machine from a process. See `start-process' for details."
-;;   (let ((input (ts-queue-create))
-;;         (output (ts-queue-create)))
-;;     (m-create
-;;      :input input
-;;      :output output
-;;      :thread
-;;      (make-thread
-;;       #'(lambda ()
-;;           ;; (message "proc: starting process")
-;;           (let* ((mutex (make-mutex))
-;;                  (done (make-condition-variable mutex))
-;;                  (proc
-;;                   (make-process
-;;                    :name "m-process"
-;;                    :command (cons program program-args)
-;;                    :connection-type 'pipe
-;;                    :filter #'(lambda (_proc x)
-;;                                ;; (message "proc: filter: %S" x)
-;;                                (ts-queue-push output x))
-;;                    :sentinel #'(lambda (_proc event)
-;;                                  ;; (message "proc: sentinel: %S" event)
-;;                                  ;; (message "proc: output: %S" output)
-;;                                  (ts-queue-close output)
-;;                                  ;; (message "proc: notifying mutex")
-;;                                  (with-mutex mutex
-;;                                    (condition-notify done))))))
-;;             ;; (message "proc: starting loop")
-;;             (cl-loop for str = (progn
-;;                                  ;; (message "proc: popping...")
-;;                                  (accept-process-output proc nil 100)
-;;                                  (ts-queue-pop input))
-;;                      until (progn
-;;                              ;; (message "proc: at eof? %S" str)
-;;                              (ts-queue-at-eof str))
-;;                      do (progn
-;;                           ;; (message "proc: send str: %S" str)
-;;                           (process-send-string proc str))
-;;                      finally (progn
-;;                                ;; (message "proc: send eof")
-;;                                (process-send-eof proc)))
-;;             ;; (message "proc: waiting for termination")
-;;             (with-mutex mutex
-;;               (condition-wait done))
-;;             ;; (message "proc: thread is done")
-;;             ))))))
+(require 'gptel)
+(require 'gptel-curl)
+(require 'gptel-openai)
+
+(cl-defun m-gptel ()
+  "Create a machine from a process. See `start-process' for details."
+  (message "m-gptel: step 1..")
+  (let* ((input (ts-queue-create))
+         (output (ts-queue-create))
+         (mutex (make-mutex))
+         (done (make-condition-variable mutex)))
+    (message "m-gptel: step 2..")
+    (m-create
+     :input input
+     :output output
+     :thread
+     (make-thread
+      #'(lambda ()
+          (message "m-gptel: step 3..")
+          (with-temp-buffer
+            (setq gptel-api-key (getenv "LITELLM_API_KEY"))
+            (let ((prompt (mapconcat #'identity (m--drain-queue input)))
+                  (gptel-backend
+                   (gptel-make-openai "LiteLLM"
+                     :host "vulcan"
+                     :protocol "http"
+                     :endpoint "/litellm/v1/chat/completions"
+                     :stream t
+                     :models '((hera/Qwen3-30B-A3B
+                                :description ""
+                                :capabilities (media tool json url)))
+                     :header
+                     (lambda () `(("x-api-key"         . ,gptel-api-key)
+                             ("x-litellm-timeout" . "7200")
+                             ("x-litellm-tags"    . "m")))))
+                  completed)
+              (message "m-gptel: step 4: %S" prompt)
+              (gptel-request prompt
+                :callback
+                #'(lambda (response info)
+                    (message "m-gptel: step 5: response %S info %S.."
+                             response info)
+                    (cond ((stringp response)
+                           (message "m-gptel: step 6..")
+                           (ts-queue-push output response)
+                           (message "m-gptel: step 7.."))
+                          ((eq t response)
+                           (message "m-gptel: step 8..")
+                           (ts-queue-close output)
+                           (message "m-gptel: step 9..")
+                           (with-mutex mutex
+                             (setq completed t)
+                             (condition-notify done))
+                           (message "m-gptel: step 10..")
+                           )))
+                :buffer (current-buffer)
+                :stream t)
+              (message "m-gptel: step 11..")
+              (with-mutex mutex
+                (while (not completed)
+                  (accept-process-output nil nil 100)
+                  (condition-wait done)))
+              (message "m-gptel: step 12.."))))))))
+
+(ert-deftest m-gptel-test ()
+  (let ((m (m-gptel)))
+    (message "(m-send m \"Hello /no_think\\n\")")
+    (m-send m "Hello /no_think\n")
+    (message "(m-close-input m)")
+    (m-close-input m)
+    (message "(should (string= ...))")
+    (sit-for 3)
+    (should (null (thread-last-error t)))
+    (should (string= "Hello! How can I assist you today?"
+                     (mapconcat #'identity (m-drain m))))
+    (message "m-gptel-test done")
+    ))
 
 (provide 'm)
 
