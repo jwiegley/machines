@@ -38,6 +38,10 @@ finished, after which it should close the output queue using
   "Send the VALUE to the given MACHINE."
   (ts-queue-push (machine-input machine) value))
 
+(defun m-close-input (machine)
+  "Close the MACHINE's input queue."
+  (ts-queue-close (machine-input machine)))
+
 (defun m-await (machine)
   "Await the next results from the given MACHINE."
   (ts-queue-pop (machine-output machine)))
@@ -46,17 +50,13 @@ finished, after which it should close the output queue using
   "Await the next results from the given MACHINE."
   (ts-queue-peek (machine-output machine)))
 
-(defun m-close-input (machine)
-  "Close the MACHINE's input queue."
-  (ts-queue-close (machine-input machine)))
-
 (defun m-output-closed-p (machine)
   "Return non-nil if the MACHINE's output queue has been closed.
 This should only ever be called once, and will block until it sees the
 closure token, so only call this in conditions where you know exactly
 when to expect that the output is closed. Generally this is only useful
 for testing."
-  (ts-queue-at-eof (m-await machine)))
+  (ts-queue-at-eof (m-peek machine)))
 
 (defsubst m-identity ()
   "The identity machine does nothing, just forwards input to output."
@@ -97,35 +97,7 @@ This operation follows monoidal laws with respect to m-identity."
 
 ;;; Example machines
 
-(cl-defun m-process (name buffer program &rest program-args)
-  "Create a machine from a process. See `start-process' for details."
-  (let ((input (ts-queue-create))
-        (output (ts-queue-create)))
-    (m-create
-     :input input
-     :thread output
-     :thread
-     (make-thread
-      #'(lambda ()
-          (let ((proc
-                 (make-process
-                  :name name
-                  :buffer buffer
-                  :command (cons program program-args)
-                  :connection-type 'pipe
-                  :filter
-                  #'(lambda (_proc input)
-                      (ts-queue-push output input))
-                  :sentinel
-                  #'(lambda (proc _event)
-                      (unless (process-live-p proc)
-                        (ts-queue-close output))))))
-            (cl-loop for str = (ts-queue-pop input)
-                     until (ts-queue-at-eof str)
-                     do (process-send-string proc str)
-                     finally (process-send-eof proc))))))))
-
-(cl-defun m-funcall (func &key combine)
+(cl-defun m-funcall (func &key (combine #'identity))
   "Turn the function FUNC into a machine.
 Since machine might receive their input piece-wise, the caller must
 specify a function to COMBINE a list of input into a final input for
@@ -134,17 +106,157 @@ FUNC."
         (output (ts-queue-create)))
     (m-create
      :input input
-     :thread output
+     :output output
      :thread
      (make-thread
       #'(lambda ()
           (let ((xs (cl-loop for x = (ts-queue-pop input)
-                             until(eq x :m--eof)
+                             until (ts-queue-at-eof x)
                              collect x)))
-            (ts-queue-push output (funcall func (funcall combine xs)))
+            (let ((result (funcall func (funcall combine xs))))
+              (ts-queue-push output result))
             (ts-queue-close output)))))))
 
-;; (m-funcall #'+ :combine #'-sum)
+(ert-deftest m-funcall-test ()
+  (let ((m (m-funcall #'+ :combine (apply-partially #'cl-reduce #'+))))
+    (m-send m 1)
+    (m-send m 2)
+    (m-send m 3)
+    (m-close-input m)
+    (should (= 6 (m-await m)))
+    (should (m-output-closed-p m))))
+
+(defun m-process (program &rest program-args)
+  "Create a machine from a process. See `start-process' for details."
+  (let ((input (ts-queue-create))
+        (output (ts-queue-create)))
+    (m-create
+     :input input
+     :output output
+     :thread
+     (make-thread
+      #'(lambda ()
+          ;; (message "proc: starting process")
+          (let* ((mutex (make-mutex))
+                 (done (make-condition-variable mutex))
+                 (proc
+                  (make-process
+                   :name "m-process"
+                   :command (cons program program-args)
+                   :connection-type 'pipe
+                   :filter #'(lambda (_proc x)
+                               ;; (message "proc: filter: %S" x)
+                               (ts-queue-push output x))
+                   :sentinel #'(lambda (_proc event)
+                                 ;; (message "proc: sentinel: %S" event)
+                                 ;; (message "proc: output: %S" output)
+                                 (ts-queue-close output)
+                                 ;; (message "proc: notifying mutex")
+                                 (with-mutex mutex
+                                   (condition-notify done))))))
+            ;; (message "proc: starting loop")
+            (cl-loop for str = (progn
+                                 ;; (message "proc: popping...")
+                                 (accept-process-output proc nil 100)
+                                 (ts-queue-pop input))
+                     until (progn
+                             ;; (message "proc: at eof? %S" str)
+                             (ts-queue-at-eof str))
+                     do (progn
+                          ;; (message "proc: send str: %S" str)
+                          (process-send-string proc str))
+                     finally (progn
+                               ;; (message "proc: send eof")
+                               (process-send-eof proc)))
+            ;; (message "proc: waiting for termination")
+            (with-mutex mutex
+              (condition-wait done))
+            ;; (message "proc: thread is done")
+            ))))))
+
+(ert-deftest m-process-test ()
+  (let ((m (m-process "cat")))
+    ;; (message "(m-send m \"Hello\\n\")")
+    (m-send m "Hello\n")
+    ;; (message "(m-close-input m)")
+    (m-close-input m)
+    ;; (message "(should (string= \"Hello\\n\" (m-await m)))")
+    (should (string= "Hello\n" (m-await m)))
+    ;; (message "(should (m-output-closed-p m))")
+    (should (null (thread-last-error t)))
+    (should (m-output-closed-p m))
+    (should (null (thread-last-error t)))
+    ;; (message "m-process-test completed")
+    ))
+
+(ert-deftest m-process-compoose-test ()
+  (let ((m (m-compose (m-process "grep" "foo") (m-process "wc" "-l"))))
+    (m-send m "foo\n")
+    (m-send m "bar\n")
+    (m-send m "foo\n")
+    (m-close-input m)
+    (should (string= "2\n" (m-await m)))
+    (should (m-output-closed-p m))))
+
+;; (cl-defun m-gptel (&optional
+;;                    prompt
+;;                    &key
+;;                    callback
+;;                    (buffer (current-buffer))
+;;                    position
+;;                    context
+;;                    dry-run
+;;                    (stream nil)
+;;                    (in-place nil)
+;;                    (system gptel--system-message)
+;;                    transforms
+;;                    (fsm (gptel-make-fsm)))
+;;   "Create a machine from a process. See `start-process' for details."
+;;   (let ((input (ts-queue-create))
+;;         (output (ts-queue-create)))
+;;     (m-create
+;;      :input input
+;;      :output output
+;;      :thread
+;;      (make-thread
+;;       #'(lambda ()
+;;           ;; (message "proc: starting process")
+;;           (let* ((mutex (make-mutex))
+;;                  (done (make-condition-variable mutex))
+;;                  (proc
+;;                   (make-process
+;;                    :name "m-process"
+;;                    :command (cons program program-args)
+;;                    :connection-type 'pipe
+;;                    :filter #'(lambda (_proc x)
+;;                                ;; (message "proc: filter: %S" x)
+;;                                (ts-queue-push output x))
+;;                    :sentinel #'(lambda (_proc event)
+;;                                  ;; (message "proc: sentinel: %S" event)
+;;                                  ;; (message "proc: output: %S" output)
+;;                                  (ts-queue-close output)
+;;                                  ;; (message "proc: notifying mutex")
+;;                                  (with-mutex mutex
+;;                                    (condition-notify done))))))
+;;             ;; (message "proc: starting loop")
+;;             (cl-loop for str = (progn
+;;                                  ;; (message "proc: popping...")
+;;                                  (accept-process-output proc nil 100)
+;;                                  (ts-queue-pop input))
+;;                      until (progn
+;;                              ;; (message "proc: at eof? %S" str)
+;;                              (ts-queue-at-eof str))
+;;                      do (progn
+;;                           ;; (message "proc: send str: %S" str)
+;;                           (process-send-string proc str))
+;;                      finally (progn
+;;                                ;; (message "proc: send eof")
+;;                                (process-send-eof proc)))
+;;             ;; (message "proc: waiting for termination")
+;;             (with-mutex mutex
+;;               (condition-wait done))
+;;             ;; (message "proc: thread is done")
+;;             ))))))
 
 (provide 'm)
 
