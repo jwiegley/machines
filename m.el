@@ -78,15 +78,13 @@ vector of inputs."
 (defun m-compose (left right)
   "Compose the LEFT machine with the RIGHT.
 This operation follows monoidal laws with respect to m-identity."
-  (let ((inputs (machine-inputs left))
-        (outputs (machine-outputs right)))
-    (make-machine
-     :inputs inputs
-     :thread outputs
-     :thread (make-thread
-              #'(lambda ()
-                  (cl-loop for xs = (m-await left)
-                           do (m-send right xs)))))))
+  (make-machine
+   :inputs (machine-inputs left)
+   :thread (machine-outputs right)
+   :thread (make-thread
+            #'(lambda ()
+                (cl-loop for xs = (m-await left)
+                         do (m-send right xs))))))
 
 (provide 'm)
 
