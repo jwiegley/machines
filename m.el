@@ -149,9 +149,7 @@ FUNC."
      :thread
      (make-thread
       #'(lambda ()
-          (let* ((mutex (make-mutex))
-                 (done (make-condition-variable mutex))
-                 completed
+          (let* (completed
                  (proc
                   (make-process
                    :name "m-process"
@@ -192,10 +190,8 @@ FUNC."
 
 (defun m-gptel ()
   "Create a machine from a process. See `start-process' for details."
-  (let* ((input (ts-queue-create))
-         (output (ts-queue-create))
-         (mutex (make-mutex))
-         (done (make-condition-variable mutex)))
+  (let ((input (ts-queue-create))
+        (output (ts-queue-create)))
     (m-create
      :input input
      :output output
