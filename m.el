@@ -149,60 +149,35 @@ FUNC."
      :thread
      (make-thread
       #'(lambda ()
-          ;; (message "proc: starting process")
           (let* ((mutex (make-mutex))
                  (done (make-condition-variable mutex))
+                 completed
                  (proc
                   (make-process
                    :name "m-process"
                    :command (cons program program-args)
                    :connection-type 'pipe
                    :filter #'(lambda (_proc x)
-                               ;; (message "proc: filter: %S" x)
                                (ts-queue-push output x))
                    :sentinel #'(lambda (_proc event)
-                                 ;; (message "proc: sentinel: %S" event)
-                                 ;; (message "proc: output: %S" output)
                                  (ts-queue-close output)
-                                 ;; (message "proc: notifying mutex")
-                                 (with-mutex mutex
-                                   (condition-notify done))))))
+                                 (setq completed t)))))
             ;; (message "proc: starting loop")
-            (cl-loop for str = (progn
-                                 ;; (message "proc: popping...")
-                                 (accept-process-output proc nil 100)
-                                 (ts-queue-pop input))
-                     until (progn
-                             ;; (message "proc: at eof? %S" str)
-                             (ts-queue-at-eof str))
-                     do (progn
-                          ;; (message "proc: send str: %S" str)
-                          (process-send-string proc str))
-                     finally (progn
-                               ;; (message "proc: send eof")
-                               (process-send-eof proc)))
-            ;; (message "proc: waiting for termination")
-            (with-mutex mutex
-              (condition-wait done))
-            ;; (message "proc: thread is done")
-            ))))))
+            (cl-loop for str = (ts-queue-pop input)
+                     until (ts-queue-at-eof str)
+                     do (process-send-string proc str)
+                     finally (process-send-eof proc))
+            (while (not completed)
+              (accept-process-output proc nil 100))))))))
 
 (ert-deftest m-process-test ()
   (let ((m (m-process "cat")))
-    ;; (message "(m-send m \"Hello\\n\")")
     (m-send m "Hello\n")
-    ;; (message "(m-close-input m)")
     (m-close-input m)
-    ;; (message "(should (string= \"Hello\\n\" (m-await m)))")
     (should (string= "Hello\n" (m-await m)))
-    ;; (message "(should (m-output-closed-p m))")
-    (should (null (thread-last-error t)))
-    (should (m-output-closed-p m))
-    (should (null (thread-last-error t)))
-    ;; (message "m-process-test completed")
-    ))
+    (should (m-output-closed-p m))))
 
-(ert-deftest m-process-compoose-test ()
+(ert-deftest m-process-compose-test ()
   (let ((m (m-compose (m-process "grep" "foo") (m-process "wc" "-l"))))
     (m-send m "foo\n")
     (m-send m "bar\n")
@@ -215,21 +190,18 @@ FUNC."
 (require 'gptel-curl)
 (require 'gptel-openai)
 
-(cl-defun m-gptel ()
+(defun m-gptel ()
   "Create a machine from a process. See `start-process' for details."
-  (message "m-gptel: step 1..")
   (let* ((input (ts-queue-create))
          (output (ts-queue-create))
          (mutex (make-mutex))
          (done (make-condition-variable mutex)))
-    (message "m-gptel: step 2..")
     (m-create
      :input input
      :output output
      :thread
      (make-thread
       #'(lambda ()
-          (message "m-gptel: step 3..")
           (with-temp-buffer
             (setq gptel-api-key (getenv "LITELLM_API_KEY"))
             (let ((prompt (mapconcat #'identity (m--drain-queue input)))
@@ -247,47 +219,26 @@ FUNC."
                              ("x-litellm-timeout" . "7200")
                              ("x-litellm-tags"    . "m")))))
                   completed)
-              (message "m-gptel: step 4: %S" prompt)
               (gptel-request prompt
                 :callback
                 #'(lambda (response info)
-                    (message "m-gptel: step 5: response %S info %S.."
-                             response info)
                     (cond ((stringp response)
-                           (message "m-gptel: step 6..")
-                           (ts-queue-push output response)
-                           (message "m-gptel: step 7.."))
+                           (ts-queue-push output response))
                           ((eq t response)
-                           (message "m-gptel: step 8..")
                            (ts-queue-close output)
-                           (message "m-gptel: step 9..")
-                           (with-mutex mutex
-                             (setq completed t)
-                             (condition-notify done))
-                           (message "m-gptel: step 10..")
-                           )))
+                           (setq completed t))))
                 :buffer (current-buffer)
                 :stream t)
-              (message "m-gptel: step 11..")
-              (with-mutex mutex
-                (while (not completed)
-                  (accept-process-output nil nil 100)
-                  (condition-wait done)))
-              (message "m-gptel: step 12.."))))))))
+              (while (not completed)
+                (accept-process-output nil nil 100)))))))))
 
 (ert-deftest m-gptel-test ()
   (let ((m (m-gptel)))
-    (message "(m-send m \"Hello /no_think\\n\")")
     (m-send m "Hello /no_think\n")
-    (message "(m-close-input m)")
     (m-close-input m)
-    (message "(should (string= ...))")
-    (sit-for 3)
     (should (null (thread-last-error t)))
     (should (string= "Hello! How can I assist you today?"
-                     (mapconcat #'identity (m-drain m))))
-    (message "m-gptel-test done")
-    ))
+                     (mapconcat #'identity (m-drain m))))))
 
 (provide 'm)
 
