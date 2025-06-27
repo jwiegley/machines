@@ -46,9 +46,17 @@ finished, after which it should close the output queue using
   "Await the next results from the given MACHINE."
   (ts-queue-peek (machine-output machine)))
 
-(defun m-close (machine)
-  "Send the VALUE to the given MACHINE."
+(defun m-close-input (machine)
+  "Close the MACHINE's input queue."
   (ts-queue-close (machine-input machine)))
+
+(defun m-output-closed-p (machine)
+  "Return non-nil if the MACHINE's output queue has been closed.
+This should only ever be called once, and will block until it sees the
+closure token, so only call this in conditions where you know exactly
+when to expect that the output is closed. Generally this is only useful
+for testing."
+  (ts-queue-at-eof (m-await machine)))
 
 (defsubst m-identity ()
   "The identity machine does nothing, just forwards input to output."
@@ -59,11 +67,11 @@ finished, after which it should close the output queue using
     (m-send m 1)
     (m-send m 2)
     (m-send m 3)
-    (m-close m)
+    (m-close-input m)
     (should (= 1 (m-await m)))
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
-    (should (ts-queue-at-eof (m-await m)))))
+    (should (m-output-closed-p m))))
 
 (defun m-compose (left right)
   "Compose the LEFT machine with the RIGHT.
@@ -81,11 +89,11 @@ This operation follows monoidal laws with respect to m-identity."
     (m-send m 1)
     (m-send m 2)
     (m-send m 3)
-    (m-close m)
+    (m-close-input m)
     (should (= 1 (m-await m)))
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
-    (should (ts-queue-at-eof (m-await m)))))
+    (should (m-output-closed-p m))))
 
 ;;; Example machines
 
