@@ -140,7 +140,8 @@ FUNC."
     (should (m-output-closed-p m))))
 
 (defun m-process (program &rest program-args)
-  "Create a machine from a process. See `start-process' for details."
+  "Create a machine from a process. See `start-process' for details.
+The PROGRAM and PROGRAM-ARGS are used to start the process."
   (let ((input (ts-queue-create))
         (output (ts-queue-create)))
     (m-create
@@ -157,14 +158,15 @@ FUNC."
                    :connection-type 'pipe
                    :filter #'(lambda (_proc x)
                                (ts-queue-push output x))
-                   :sentinel #'(lambda (_proc event)
+                   :sentinel #'(lambda (_proc _event)
                                  (ts-queue-close output)
                                  (setq completed t)))))
-            ;; (message "proc: starting loop")
+
             (cl-loop for str = (ts-queue-pop input)
                      until (ts-queue-at-eof str)
                      do (process-send-string proc str)
                      finally (process-send-eof proc))
+
             (while (not completed)
               (accept-process-output proc nil 100))))))))
 
@@ -176,7 +178,8 @@ FUNC."
     (should (m-output-closed-p m))))
 
 (ert-deftest m-process-compose-test ()
-  (let ((m (m-compose (m-process "grep" "foo") (m-process "wc" "-l"))))
+  (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
+                      (m-process "wc" "-l"))))
     (m-send m "foo\n")
     (m-send m "bar\n")
     (m-send m "foo\n")
@@ -214,12 +217,15 @@ FUNC."
                              ("x-litellm-timeout" . "7200")
                              ("x-litellm-tags"    . "m")))))
                   (gptel-use-context 'user)
+                  (gptel-prompt-transform-functions
+                   '(gptel--transform-add-context))
                   completed)
               (cl-loop for str = (ts-queue-pop input)
                        until (ts-queue-at-eof str)
                        do (insert str))
-              (goto-char (point-min))
-              (gptel-request prompt
+              (insert ?\n ?\n)
+              (insert prompt)
+              (gptel-request (buffer-string)
                 :callback
                 #'(lambda (response info)
                     (cond ((stringp response)
@@ -227,7 +233,6 @@ FUNC."
                           ((eq t response)
                            (ts-queue-close output)
                            (setq completed t))))
-                :context (list (current-buffer))
                 :stream t)
               (while (not completed)
                 (accept-process-output nil nil 100)))))))))
@@ -239,8 +244,8 @@ FUNC."
     (m-send m "Hello /no_think\n")
     (m-close-input m)
     (should (null (thread-last-error t)))
-    (should (string= "Hello! How can I assist you today?"
-                     (mapconcat #'identity (m-drain m))))))
+    (should (string-match-p "Sacramento"
+                            (mapconcat #'identity (m-drain m))))))
 
 (provide 'm)
 
