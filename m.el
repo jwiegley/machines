@@ -97,6 +97,34 @@ This operation follows monoidal laws with respect to m-identity."
 
 ;;; Example machines
 
+(cl-defun m-process (name buffer program &rest program-args)
+  "Create a machine from a process. See `start-process' for details."
+  (let ((input (ts-queue-create))
+        (output (ts-queue-create)))
+    (m-create
+     :input input
+     :thread output
+     :thread
+     (make-thread
+      #'(lambda ()
+          (let ((proc
+                 (make-process
+                  :name name
+                  :buffer buffer
+                  :command (cons program program-args)
+                  :connection-type 'pipe
+                  :filter
+                  #'(lambda (_proc input)
+                      (ts-queue-push output input))
+                  :sentinel
+                  #'(lambda (proc _event)
+                      (unless (process-live-p proc)
+                        (ts-queue-close output))))))
+            (cl-loop for str = (ts-queue-pop input)
+                     until (ts-queue-at-eof str)
+                     do (process-send-string proc str)
+                     finally (process-send-eof proc))))))))
+
 (cl-defun m-funcall (func &key combine)
   "Turn the function FUNC into a machine.
 Since machine might receive their input piece-wise, the caller must
@@ -107,16 +135,14 @@ FUNC."
     (m-create
      :input input
      :thread output
-     :thread (make-thread
-              #'(lambda ()
-                  ;; jww (2025-06-27): Need a way for machines to indicate
-                  ;; when they are done operating. This mechanism here of
-                  ;; pushing a special token onto the queue is not great.
-                  (let ((xs (cl-loop for x = (ts-queue-pop input)
-                                     unless (eq x :m--eof)
-                                     collect x)))
-                    (ts-queue-push output (funcall func (funcall combine xs)))
-                    (ts-queue-push output :m--eof)))))))
+     :thread
+     (make-thread
+      #'(lambda ()
+          (let ((xs (cl-loop for x = (ts-queue-pop input)
+                             until(eq x :m--eof)
+                             collect x)))
+            (ts-queue-push output (funcall func (funcall combine xs)))
+            (ts-queue-close output)))))))
 
 ;; (m-funcall #'+ :combine #'-sum)
 
