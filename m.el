@@ -188,7 +188,7 @@ FUNC."
 (require 'gptel-curl)
 (require 'gptel-openai)
 
-(defun m-gptel ()
+(defun m-gptel (prompt)
   "Create a machine from a process. See `start-process' for details."
   (let ((input (ts-queue-create))
         (output (ts-queue-create)))
@@ -200,8 +200,7 @@ FUNC."
       #'(lambda ()
           (with-temp-buffer
             (setq gptel-api-key (getenv "LITELLM_API_KEY"))
-            (let ((prompt (mapconcat #'identity (m--drain-queue input)))
-                  (gptel-backend
+            (let ((gptel-backend
                    (gptel-make-openai "LiteLLM"
                      :host "vulcan"
                      :protocol "http"
@@ -214,7 +213,12 @@ FUNC."
                      (lambda () `(("x-api-key"         . ,gptel-api-key)
                              ("x-litellm-timeout" . "7200")
                              ("x-litellm-tags"    . "m")))))
+                  (gptel-use-context 'user)
                   completed)
+              (cl-loop for str = (ts-queue-pop input)
+                       until (ts-queue-at-eof str)
+                       do (insert str))
+              (goto-char (point-min))
               (gptel-request prompt
                 :callback
                 #'(lambda (response info)
@@ -223,13 +227,15 @@ FUNC."
                           ((eq t response)
                            (ts-queue-close output)
                            (setq completed t))))
-                :buffer (current-buffer)
+                :context (list (current-buffer))
                 :stream t)
               (while (not completed)
                 (accept-process-output nil nil 100)))))))))
 
 (ert-deftest m-gptel-test ()
-  (let ((m (m-gptel)))
+  (let ((m (m-compose
+            (m-process "echo" "What is the weather like in Sacramento?")
+            (m-gptel "Answer the question, please."))))
     (m-send m "Hello /no_think\n")
     (m-close-input m)
     (should (null (thread-last-error t)))
