@@ -62,13 +62,26 @@ finished, after which it should close the output queue using
   "Drain the output of MACHINE into a list."
   (m--drain-queue (machine-output machine)))
 
+(defun m-fork (machine1 machine2 &rest machines)
+  "Create a machine that sends its input to all the machines.
+The results are transmitted with a tag to indicate which machine they
+originated from:
+  (1 . value)
+  (0 . value)
+  (1 . value)
+")
+
+(defun m-join (machine1 machine2 &rest machines))
+
 (defun m-output-closed-p (machine)
   "Return non-nil if the MACHINE's output queue has been closed.
 This should only ever be called once, and will block until it sees the
 closure token, so only call this in conditions where you know exactly
 when to expect that the output is closed. Generally this is only useful
 for testing."
-  (ts-queue-at-eof (m-peek machine)))
+  (let ((head (m-peek machine)))
+    (or (null (car head))
+        (ts-queue-at-eof (cdr head)))))
 
 (defsubst m-identity ()
   "The identity machine does nothing, just forwards input to output."
@@ -177,6 +190,18 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (should (string= "Hello\n" (m-await m)))
     (should (m-output-closed-p m))))
 
+(ert-deftest m-process-drain-test ()
+  (let ((m (m-process "echo" "hello")))
+    (should (string= "hello\n" (mapconcat #'identity (m-drain m))))))
+
+(ert-deftest m-process-drain-2-test ()
+  (should (string=
+           "Hello there\n"
+           (thread-last
+             (m-process "echo" "Hello there")
+             (m-drain)
+             (mapconcat #'identity)))))
+
 (ert-deftest m-process-compose-test ()
   (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
                       (m-process "wc" "-l"))))
@@ -191,7 +216,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
 (require 'gptel-curl)
 (require 'gptel-openai)
 
-(defun m-gptel (prompt)
+(defun m-gptel (&optional prompt)
   "Create a machine from a process. See `start-process' for details."
   (let ((input (ts-queue-create))
         (output (ts-queue-create)))
@@ -239,9 +264,9 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
 
 (ert-deftest m-gptel-test ()
   (let ((m (m-compose
-            (m-process "echo" "What is the weather like in Sacramento?")
-            (m-gptel "Answer the question, please."))))
-    (m-send m "Hello /no_think\n")
+            (m-process "cat")
+            (m-gptel "Answer the question, please. /no_think"))))
+    (m-send m "What is the weather like in Sacramento?")
     (m-close-input m)
     (should (null (thread-last-error t)))
     (should (string-match-p "Sacramento"

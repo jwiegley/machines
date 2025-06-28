@@ -37,11 +37,14 @@
     (fifo-pop (ts-queue-fifo queue))))
 
 (defun ts-queue-peek (queue)
+  "Peek at the queue.
+Returns one of two cons cells:
+  (t . value)
+  (nil . nil)"
   (with-mutex (ts-queue-mutex queue)
-    (while (fifo-empty-p (ts-queue-fifo queue))
-      (condition-wait (ts-queue-pushed queue)))
-    (condition-notify (ts-queue-pushed queue) t)
-    (fifo-head (ts-queue-fifo queue))))
+    (if (fifo-empty-p (ts-queue-fifo queue))
+        '(nil . nil)
+      (cons t (fifo-head (ts-queue-fifo queue))))))
 
 (ert-deftest ts-queue-push-test ()
   (let ((queue (ts-queue-create :fifo (fifo-from-list '(1 2 3)))))
