@@ -30,7 +30,7 @@
     (should (> (qsem-avail qsem) 0))
     (ts-queue--debug "qsem-acquire..5 %S" (qsem-name qsem))
     (cl-decf (qsem-avail qsem))
-    (ts-queue--debug "qsem-acquire..6 %S" (qsem-name qsem))))
+    (ts-queue--debug "qsem-acquire..done %S" (qsem-name qsem))))
 
 (defun qsem-release (qsem)
   (ts-queue--debug "qsem-release..1 %S" (qsem-name qsem))
@@ -41,7 +41,7 @@
     (should (<= (qsem-avail qsem) (qsem-size qsem)))
     (ts-queue--debug "qsem-release..4 %S" (qsem-name qsem))
     (condition-notify (qsem-ready qsem))
-    (ts-queue--debug "qsem-release..5 %S" (qsem-name qsem))))
+    (ts-queue--debug "qsem-release..done %S" (qsem-name qsem))))
 
 (defmacro with-qsem (qsem &rest body)
   `(unwind-protect
@@ -75,9 +75,9 @@
 
 (defun ts-queue-push (queue elem)
   (ts-queue--debug "ts-queue-push..1 %S %S" (ts-queue-name queue) elem)
+  (qsem-acquire (ts-queue-slots queue))
+  (ts-queue--debug "ts-queue-push..2 %S %S" (ts-queue-name queue) elem)
   (with-mutex (ts-queue-mutex queue)
-    (ts-queue--debug "ts-queue-push..2 %S %S" (ts-queue-name queue) elem)
-    (qsem-acquire (ts-queue-slots queue))
     (ts-queue--debug "ts-queue-push..3 %S %S" (ts-queue-name queue) elem)
     (fifo-push (ts-queue-fifo queue) elem)
     (ts-queue--debug "ts-queue-push..4 %S %S" (ts-queue-name queue) elem)
@@ -85,12 +85,13 @@
     (ts-queue--debug "ts-queue-push..5 %S %S" (ts-queue-name queue) elem)
     )
   (ts-queue--debug "ts-queue-push..6 %S %S" (ts-queue-name queue) elem)
-  (thread-yield))
+  (thread-yield)
+  (ts-queue--debug "ts-queue-push..done %S %S" (ts-queue-name queue) elem))
 
 (defun ts-queue-close (queue)
   (ts-queue--debug "ts-queue-close..1 %S" (ts-queue-name queue))
   (ts-queue-push queue :ts-queue--eof)
-  (ts-queue--debug "ts-queue-close..2 %S" (ts-queue-name queue))
+  (ts-queue--debug "ts-queue-close..done %S" (ts-queue-name queue))
   )
 
 (defun ts-queue-at-eof (value)
@@ -110,7 +111,7 @@
         (fifo-pop (ts-queue-fifo queue))
       (ts-queue--debug "ts-queue-pop..5 %S" (ts-queue-name queue))
       (qsem-release (ts-queue-slots queue))
-      (ts-queue--debug "ts-queue-pop..6 %S" (ts-queue-name queue)))
+      (ts-queue--debug "ts-queue-pop..done %S" (ts-queue-name queue)))
     ))
 
 (defun ts-queue-peek (queue)
@@ -121,15 +122,20 @@ Returns one of two cons cells:
   (ts-queue--debug "ts-queue-peek..1 %S" (ts-queue-name queue))
   (with-mutex (ts-queue-mutex queue)
     (ts-queue--debug "ts-queue-peek..2 %S" (ts-queue-name queue))
-    (if (fifo-empty-p (ts-queue-fifo queue))
-        '(nil . nil)
-      (cons t (fifo-head (ts-queue-fifo queue))))))
+    (prog1
+        (if (fifo-empty-p (ts-queue-fifo queue))
+            '(nil . nil)
+          (cons t (fifo-head (ts-queue-fifo queue))))
+      (ts-queue--debug "ts-queue-peek..done %S" (ts-queue-name queue)))))
 
 (defun ts-queue-closed-p (queue)
   (ts-queue--debug "ts-queue-closed-p..1 %S" (ts-queue-name queue))
   (let ((head (ts-queue-peek queue)))
-    (or (null (car head))
-        (ts-queue-at-eof (cdr head)))))
+    (ts-queue--debug "ts-queue-closed-p..2 %S" (ts-queue-name queue))
+    (prog1
+        (or (null (car head))
+            (ts-queue-at-eof (cdr head)))
+      (ts-queue--debug "ts-queue-closed-p..3 %S" (ts-queue-name queue)))))
 
 (ert-deftest ts-queue-push-test ()
   (let ((queue (ts-queue-create :fifo (fifo-from-list '(1 2 3)))))

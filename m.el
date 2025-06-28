@@ -351,10 +351,10 @@ making this a cartesian closed category of connected streaming machines."
   "Take at most N from the given MACHINE.
 If MACHINE yields fewer than N elements, this machine yields that same
 number of elements."
-  (m--debug "m-take..1 %s %s" n (machine-name machine))
-  (let* ((name (format "m-take %s %s" n (machine-name machine)))
+  (m--debug "m-take..1 %s %S" n (machine-name machine))
+  (let* ((name (format "m-take %s %S" n (machine-name machine)))
          (output (ts-queue-create :name (concat name " (output)"))))
-    (m--debug "m-take..2 %s" name)
+    (m--debug "m-take..2 %S" name)
     (make-machine
      :name name
      :input (machine-input machine)
@@ -362,19 +362,28 @@ number of elements."
      :thread
      (make-thread
       #'(lambda ()
-          (m--debug "m-take..3 %s" name)
+          (m--debug "m-take..3 %S" name)
           (cl-loop for i from 1 to n
-                   for x = (m-await machine)
-                   until (m-eof-p x)
-                   do (ts-queue-push output x)
+                   for x = (progn
+                             (m--debug "m-take..4 %S %S %S" name i x)
+                             (let ((y (m-await machine)))
+                               (m--debug "m-take..5 %S %S %S %S" name i x y)
+                               y))
+                   until   (progn
+                             (m--debug "m-take..6 %S %S %S" name i x)
+                             (m-eof-p x))
+                   do      (progn
+                             (m--debug "m-take..7 %S %S %S" name i x)
+                             (ts-queue-push output x)
+                             (m--debug "m-take..8 %S %S %S" name i x))
                    finally (progn
-                             (m--debug "m-take..4 %s" name)
+                             (m--debug "m-take..9 %S" name)
                              (ts-queue-close output)
-                             (m--debug "m-take..5 %s" name)
+                             (m--debug "m-take..10 %S" name)
                              ;; (m-stop machine)
-                             (m--debug "m-take..6 %s" name)
+                             (m--debug "m-take..11 %S" name)
                              ))
-          (m--debug "m-take..done %s" name)
+          (m--debug "m-take..done %S" name)
           )
       name))))
 
