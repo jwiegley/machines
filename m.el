@@ -463,7 +463,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
 (defun m-fix (func start)
   (m--debug "m-fix..1 %S %S" func start)
   (cl-destructuring-bind (name _ output)
-      (m--parts "m-fix" :no-input t :output-size 16)
+      (m--parts "m-fix" :no-input t :output-size 1)
     (m--debug "m-fix..2")
     (make-machine
      :name name
