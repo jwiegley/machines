@@ -16,12 +16,12 @@
            until (ts-queue-at-eof x)
            collect x))
 
-(defun m--connect-queues (input output)
+(defun m--connect-queues (input output &optional func)
   "Drain the INPUT queue into the OUTPUT queue."
-  (m--debug "m--connect-queues..1 %S %S" input output)
+  (m--debug "m--connect-queues..1 %S %S %S" input output func)
   (cl-loop for x = (ts-queue-pop input)
            until (ts-queue-at-eof x)
-           do (ts-queue-push output x)
+           do (ts-queue-push output (funcall (or func #'identity) x))
            finally (ts-queue-close output)))
 
 (cl-defstruct (machine (:copier nil))
@@ -217,7 +217,7 @@ this a cartesian closed category of connected streaming machines."
   (m--debug "m-map..1 %S %s" func (machine-name machine))
   (let* ((name (format "m-map %s" (machine-name machine)))
          (output (ts-queue-create :name (concat name " (output)"))))
-    (m--debug "m-map..2")
+    (m--debug "m-map..2 %s" name)
     (make-machine
      :name name
      :input (machine-input machine)
@@ -225,25 +225,11 @@ this a cartesian closed category of connected streaming machines."
      :thread
      (make-thread
       #'(lambda ()
-          (m--debug "m-map..3")
-          (cl-loop for x = (progn
-                             (m--debug "m-map..4")
-                             (m-await machine))
-                   until   (progn
-                             (m--debug "m-map..5 %S" x)
-                             (m-eof-p x))
-                   do      (progn
-                             (m--debug "m-map..6 %S %S" func x)
-                             (let ((arg (funcall func x)))
-                               (m--debug "m-map..7 %S" arg)
-                               (ts-queue-push output arg)
-                               (m--debug "m-map..8")))
-                   finally (progn
-                             (m--debug "m-map..9")
-                             (ts-queue-close output)
-                             (m--debug "m-map..10")
-                             ))
-          (m--debug "m-map..11")
+          (m--debug "m-map..3 %s" name)
+          (m--connect-queues (machine-output machine) output func)
+          (m--debug "m-map..4 %s" name)
+          (m-join machine)
+          (m--debug "m-map..5 %s" name)
           )
       name))))
 
