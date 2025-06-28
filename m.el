@@ -130,6 +130,11 @@ for testing."
   (ts-queue-closed-p (machine-output machine)))
 
 (cl-defun m--parts (name &key no-input (input-size 256) (output-size 256))
+  "Helper macro to make some parts of a machine, reducing duplicate code.
+NAME is the name of the machine.
+NO-INPUT should be non-nil if this machine expects no input.
+INPUT-SIZE is the input queue size, if NO-INPUT is nil.
+OUTPUT-SIZE is the output queue size."
   (list name
         (unless no-input
           (ts-queue-create :name (concat name " (input)")
@@ -176,8 +181,8 @@ This composes in the reverse order to mathematical composition: the left
 machine acts on the inputs coming into the composed machine, and then
 passes its outputs to the right machine.
 
-This operation follows monoidal laws with respect to m-identity, making
-this a cartesian closed category of connected streaming machines."
+This operation follows monoidal laws with respect to `m-identity',
+making this a cartesian closed category of connected streaming machines."
   (let ((name (format "m-compose %s %s"
                       (machine-name left) (machine-name right))))
     (make-machine
@@ -462,9 +467,10 @@ If MACHINE yields fewer than N elements, this machine yields none."
 (defun m-fix (func start)
   (m--debug "m-fix..1 %S %S" func start)
   (cl-destructuring-bind (name _ output)
-      (m--parts "m-fix" :no-input t :output-size 1)
+      (m--parts (format "m-fix %S" func)
+                :no-input t :output-size 1)
     (let ((stopped (list nil)))
-      (m--debug "m-fix..2")
+      (m--debug "m-fix..2 %S" func)
       (make-machine
        :name name
        :input nil
@@ -472,13 +478,24 @@ If MACHINE yields fewer than N elements, this machine yields none."
        :thread
        (make-thread
         #'(lambda ()
-            (m--debug "m-fix..3")
-            (cl-loop for x = start then (funcall func x)
-                     until (car stopped)
-                     do (ts-queue-push output x))
-            (m--debug "m-fix..4")
+            (m--debug "m-fix..3 %S" func)
+            (cl-loop for x = start
+                     then (progn
+                            (m--debug "m-fix..4 %S %S" func x)
+                            (let ((y (funcall func x)))
+                              (m--debug "m-fix..5 %S %S %S" func x y)
+                              y))
+                     until (progn
+                             (m--debug "m-fix..6 %S %S" func stopped)
+                             (car stopped))
+                     do (progn
+                          (m--debug "m-fix..7 %S %S" func x)
+                          (ts-queue-push output x)
+                          (m--debug "m-fix..8 %S %S" func x)
+                          ))
+            (m--debug "m-fix..9 %S" func)
             (ts-queue-close output)
-            (m--debug "m-fix..done")
+            (m--debug "m-fix..done %S" func)
             )
         name)
        :stop stopped))))
