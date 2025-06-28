@@ -520,7 +520,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
 
 (ert-deftest m-fibonacci-test ()
   (message "m-fibonacci-test...")
-  (setq ts-queue-debug t)
+  ;; (setq ts-queue-debug t)
   (let ((m (m-take 6 (m-fibonacci))))
     (m--debug "m-fibonacci-test..1")
     (should (= 1 (m-await m)))
