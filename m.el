@@ -286,15 +286,26 @@ this a cartesian closed category of connected streaming machines."
   (m--debug "m-iterator-test...done"))
 
 (defun m-from-list (xs)
-  (m-iterator
-   (funcall (iter-lambda ()
-              (dolist (x xs)
-                (m--debug "m-from-list..1 %S" x)
-                (iter-yield x)
-                (m--debug "m-from-list..2 %S" x)
-                )
-              (m--debug "m-from-list..done")
-              ))))
+  (m--debug "m-from-list..1")
+  (cl-destructuring-bind (name _ output)
+      (m--parts "m-from-list" :no-input t :output-size 16)
+    (m--debug "m-from-list..2")
+    (make-machine
+     :name name
+     :input nil
+     :output output
+     :thread
+     (make-thread
+      #'(lambda ()
+          (m--debug "m-from-list..3")
+          (dolist (x xs)
+            (m--debug "m-from-list..4 %S" x)
+            (ts-queue-push output x))
+          (m--debug "m-from-list..5")
+          (ts-queue-close output)
+          (m--debug "m-from-list..done")
+          )
+      name))))
 
 (ert-deftest m-from-list-test ()
   (message "m-from-list-test...")
@@ -449,20 +460,35 @@ If MACHINE yields fewer than N elements, this machine yields none."
   (should-be-quiescent)
   (m--debug "m-drop-test..done"))
 
-(iter-defun m-fix (func start)
-  (cl-loop for x = start then (funcall func x)
-           ;; until (ts-queue-closed-p input)
-           do (iter-yield x)))
+(defun m-fix (func start)
+  (m--debug "m-fix..1 %S %S" func start)
+  (cl-destructuring-bind (name _ output)
+      (m--parts "m-fix" :no-input t :output-size 16)
+    (m--debug "m-fix..2")
+    (make-machine
+     :name name
+     :input nil
+     :output output
+     :thread
+     (make-thread
+      #'(lambda ()
+          (m--debug "m-fix..3")
+          (cl-loop for x = start then (funcall func x)
+                   do (ts-queue-push output x))
+          (m--debug "m-fix..4")
+          (ts-queue-close output)
+          (m--debug "m-fix..done")
+          )
+      name))))
 
 (defun m-fibonacci ()
   "Return a Fibonacci series machine."
-  (m-iterator
-   (let ((prev-prev 0))
-     (m-fix #'(lambda (prev)
-                (prog1
-                    (+ prev prev-prev)
-                  (setq prev-prev prev)))
-            1))))
+  (let ((prev-prev 0))
+    (m-fix #'(lambda (prev)
+               (prog1
+                   (+ prev prev-prev)
+                 (setq prev-prev prev)))
+           1)))
 
 (ert-deftest m-fibonacci-test ()
   (message "m-fibonacci-test...")
