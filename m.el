@@ -181,6 +181,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
                      finally (process-send-eof proc))
 
             (while (not completed)
+              (thread-yield)
               (accept-process-output proc nil 100))))))))
 
 (ert-deftest m-process-test ()
