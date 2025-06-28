@@ -8,12 +8,14 @@
 
 (defun m--drain-queue (input)
   "Drain the INPUT queue and return the list of its values."
+  (when ts-queue-debug (message "m--drain-queue..1 %S" input))
   (cl-loop for x = (ts-queue-pop input)
            until (ts-queue-at-eof x)
            collect x))
 
 (defun m--connect (input output)
   "Drain the INPUT queue into the OUTPUT queue."
+  (when ts-queue-debug (message "m--connect..1 %S %S" input output))
   (cl-loop for x = (ts-queue-pop input)
            until (ts-queue-at-eof x)
            do (ts-queue-push output x)
@@ -25,10 +27,13 @@
      (:constructor nil)
      (:constructor
       m-create
-      (&key (input (ts-queue-create))
-            (output (ts-queue-create))
-            (thread (make-thread
-                     #'(lambda () (m--connect input output)))))))
+      (&key
+       (name "machine")
+       (input (ts-queue-create :name (concat name " (input)")))
+       (output (ts-queue-create :name (concat name " (output)")))
+       (thread (make-thread
+                #'(lambda () (m--connect input output))
+                name)))))
   "Machines map INPUT to OUTPUT by executing code in THREAD.
 Note that INPUT may be either a single queue or a vector of queues, it
 all depends on the machine and how it draws its input. Likewise,
@@ -40,27 +45,51 @@ THREAD should read from its input until the value receives yields true
 when passed to `ts-queue-at-eof', while writing to its output until
 finished, after which it should close the output queue using
 `ts-queue-close'. At this point the thread should exit."
-  input output thread)
+  name input output thread)
 
 (defun m-send (machine value)
   "Send the VALUE to the given MACHINE."
+  (when ts-queue-debug (message "m-send..1 %S %S" machine value))
   (ts-queue-push (machine-input machine) value))
 
 (defun m-close-input (machine)
   "Close the MACHINE's input queue."
+  (when ts-queue-debug (message "m-close-input..1 %S" machine))
   (ts-queue-close (machine-input machine)))
+
+(defun m-close-output (machine)
+  "Close the MACHINE's input queue."
+  (when ts-queue-debug (message "m-close-output..1 %S" machine))
+  (ts-queue-close (machine-output machine)))
 
 (defun m-await (machine)
   "Await the next results from the given MACHINE."
+  (when ts-queue-debug (message "m-await..1 %S" machine))
   (ts-queue-pop (machine-output machine)))
 
 (defun m-peek (machine)
   "Await the next results from the given MACHINE."
+  (when ts-queue-debug (message "m-peek..1 %S" machine))
   (ts-queue-peek (machine-output machine)))
 
 (defun m-drain (machine)
   "Drain the output of MACHINE into a list."
+  (when ts-queue-debug (message "m-drain..1 %S" machine))
   (m--drain-queue (machine-output machine)))
+
+(defun m-source (machine)
+  "A source is a MACHINE that expects no input."
+  (when ts-queue-debug (message "m-source..1 %S" machine))
+  (prog1
+      machine
+    (m-close-input machine)))
+
+(defun m-sink (machine)
+  "A sink is a MACHINE that produces no output."
+  (when ts-queue-debug (message "m-sink..1 %S" machine))
+  (prog1
+      machine
+    (m-close-output machine)))
 
 (defun m-fork (machine1 machine2 &rest machines)
   "Create a machine that sends its input to all the machines.
@@ -79,11 +108,13 @@ This should only ever be called once, and will block until it sees the
 closure token, so only call this in conditions where you know exactly
 when to expect that the output is closed. Generally this is only useful
 for testing."
+  (when ts-queue-debug (message "m-output-closed-p..1 %S" machine))
   (ts-queue-closed-p (machine-output machine)))
 
 (defsubst m-identity ()
   "The identity machine does nothing, just forwards input to output."
-  (m-create))
+  (when ts-queue-debug (message "m-identity..1"))
+  (m-create :name "m-identity"))
 
 (ert-deftest m-identity-test ()
   (let ((m (m-identity)))
@@ -94,7 +125,8 @@ for testing."
     (should (= 1 (m-await m)))
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
-    (should (m-output-closed-p m))))
+    (should (m-output-closed-p m))
+    (should (null (thread-last-error t)))))
 
 (defun m-compose (left right)
   "Compose the LEFT machine with the RIGHT.
@@ -104,15 +136,19 @@ passes its outputs to the right machine.
 
 This operation follows monoidal laws with respect to m-identity, making
 this a cartesian closed category of connected streaming machines."
-  (m-create
-   :input (machine-input left)
-   :output (machine-output right)
-   :thread (make-thread
-            #'(lambda ()
-                (cl-loop for x = (m-await left)
-                         until (ts-queue-at-eof x)
-                         do (m-send right x)
-                         finally (m-close-input right))))))
+  (let ((name (format "m-compose %s %s"
+                      (machine-name left) (machine-name right))))
+    (m-create
+     :name name
+     :input (machine-input left)
+     :output (machine-output right)
+     :thread (make-thread
+              #'(lambda ()
+                  (cl-loop for x = (m-await left)
+                           until (ts-queue-at-eof x)
+                           do (m-send right x)
+                           finally (m-close-input right)))
+              name))))
 
 (defalias 'm-connect 'm-compose)
 (defalias 'm->> 'm-compose)
@@ -126,7 +162,13 @@ this a cartesian closed category of connected streaming machines."
     (should (= 1 (m-await m)))
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
-    (should (m-output-closed-p m))))
+    (should (m-output-closed-p m))
+    (should (null (thread-last-error t)))))
+
+(defun m--parts (name)
+  (list name
+        (ts-queue-create :name (concat name " (input)"))
+        (ts-queue-create :name (concat name " (output)"))))
 
 ;;; Example machines
 
@@ -135,9 +177,10 @@ this a cartesian closed category of connected streaming machines."
 Since machine might receive their input piece-wise, the caller must
 specify a function to COMBINE a list of input into a final input for
 FUNC."
-  (let ((input (ts-queue-create))
-        (output (ts-queue-create)))
+  (cl-destructuring-bind (name input output)
+      (m--parts "m-funcall")
     (m-create
+     :name name
      :input input
      :output output
      :thread
@@ -149,7 +192,8 @@ FUNC."
             (funcall combine)
             (funcall func)
             (ts-queue-push output))
-          (ts-queue-close output))))))
+          (ts-queue-close output))
+      name))))
 
 (ert-deftest m-funcall-test ()
   (let ((m (m-funcall #'+ :combine (apply-partially #'cl-reduce #'+))))
@@ -158,19 +202,24 @@ FUNC."
     (m-send m 3)
     (m-close-input m)
     (should (= 6 (m-await m)))
-    (should (m-output-closed-p m))))
+    (should (m-output-closed-p m))
+    (should (null (thread-last-error t)))))
 
 (defun m-process (program &rest program-args)
   "Create a machine from a process. See `start-process' for details.
 The PROGRAM and PROGRAM-ARGS are used to start the process."
-  (let ((input (ts-queue-create))
-        (output (ts-queue-create)))
+  (when ts-queue-debug (message "m-process..1 %S %S" program program-args))
+  (cl-destructuring-bind (name input output)
+      (m--parts (format "m-process %s" program))
+    (when ts-queue-debug (message "m-process..2 %S %S" input output))
     (m-create
+     :name name
      :input input
      :output output
      :thread
      (make-thread
       #'(lambda ()
+          (when ts-queue-debug (message "m-process..3"))
           (let* (completed
                  (proc
                   (make-process
@@ -178,34 +227,65 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
                    :command (cons program program-args)
                    :connection-type 'pipe
                    :filter #'(lambda (_proc x)
-                               (ts-queue-push output x))
-                   :sentinel #'(lambda (_proc _event)
+                               (when ts-queue-debug (message "m-process..4 %S" x))
+                               (ts-queue-push output x)
+                               (when ts-queue-debug (message "m-process..5"))
+                               )
+                   :sentinel #'(lambda (_proc event)
+                                 (when ts-queue-debug (message "m-process..6 %S" event))
                                  (ts-queue-close output)
+                                 (when ts-queue-debug (message "m-process..7"))
                                  (setq completed t)))))
 
-            (cl-loop for str = (ts-queue-pop input)
-                     until (ts-queue-at-eof str)
-                     do (process-send-string proc str)
-                     finally (process-send-eof proc))
+            (when ts-queue-debug (message "m-process..8"))
+            (cl-loop for str = (progn
+                                 (when ts-queue-debug (message "m-process..9 %S"))
+                                 (let ((x (ts-queue-pop input)))
+                                   (when ts-queue-debug (message "m-process..10 %S" x))
+                                   x))
+                     until     (progn
+                                 (when ts-queue-debug (message "m-process..11 %S" str))
+                                 (let ((x (ts-queue-at-eof str)))
+                                   (when ts-queue-debug (message "m-process..12 %S" x))
+                                   x))
+                     do        (progn
+                                 (when ts-queue-debug (message "m-process..13 %S" str))
+                                 (process-send-string proc str))
+                     finally   (progn
+                                 (when ts-queue-debug (message "m-process..14"))
+                                 (process-send-eof proc)))
 
+            (when ts-queue-debug (message "m-process..15"))
             (while (not completed)
+              (when ts-queue-debug (message "m-process..16 %S"))
               (thread-yield)
-              (accept-process-output proc nil 100))))))))
+              (when ts-queue-debug (message "m-process..17 %S"))
+              (accept-process-output proc nil 100)
+              (when ts-queue-debug (message "m-process..18 %S"))
+              )
+
+            (when ts-queue-debug (message "m-process..19 %S"))
+            ))
+      name))))
 
 (ert-deftest m-process-test ()
   (let ((m (m-process "cat")))
     (m-send m "Hello\n")
     (m-close-input m)
     (should (string= "Hello\n" (m-await m)))
-    (should (m-output-closed-p m))))
+    (should (m-output-closed-p m))
+    (should (null (thread-last-error t)))))
 
 (ert-deftest m-process-drain-test ()
-  (thread-last
-    (m-process "echo" "Hello there")
-    (m-drain)
-    (mapconcat #'identity)
-    (string= "Hello there\n")
-    should))
+  (let ((ts-queue-debug t))
+    (thread-last
+      (m-process "echo" "Hello there")
+      (m-source)
+      (m-drain)
+      (mapconcat #'identity)
+      (string= "Hello there\n")
+      should))
+  (should (null (thread-last-error t))))
 
 (ert-deftest m-process-compose-test ()
   (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
@@ -215,7 +295,8 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (m-send m "foo\n")
     (m-close-input m)
     (should (string= "2\n" (m-await m)))
-    (should (m-output-closed-p m))))
+    (should (m-output-closed-p m))
+    (should (null (thread-last-error t)))))
 
 (provide 'm)
 
