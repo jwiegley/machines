@@ -191,16 +191,12 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (should (m-output-closed-p m))))
 
 (ert-deftest m-process-drain-test ()
-  (let ((m (m-process "echo" "hello")))
-    (should (string= "hello\n" (mapconcat #'identity (m-drain m))))))
-
-(ert-deftest m-process-drain-2-test ()
-  (should (string=
-           "Hello there\n"
-           (thread-last
-             (m-process "echo" "Hello there")
-             (m-drain)
-             (mapconcat #'identity)))))
+  (thread-last
+    (m-process "echo" "Hello there")
+    (m-drain)
+    (mapconcat #'identity)
+    (string= "Hello there\n")
+    should))
 
 (ert-deftest m-process-compose-test ()
   (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
