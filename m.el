@@ -159,7 +159,8 @@ this a cartesian closed category of connected streaming machines."
                   (cl-loop for x = (m-await left)
                            until (m-eof-p x)
                            do (m-send right x)
-                           finally (m-close-input right)))
+                           finally (m-close-input right))
+                  (m-join left))
               name))))
 
 (defalias 'm-connect 'm-compose)
