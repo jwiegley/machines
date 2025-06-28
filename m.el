@@ -298,7 +298,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
   (m--debug "m-process..1 %S %S" program program-args)
   (cl-destructuring-bind (name input output)
       (m--parts (format "m-process %s" program))
-    (m--debug "m-process..2 %S %S" input output)
+    (m--debug "m-process..2 %s %S %S" name input output)
     (make-machine
      :name name
      :input input
@@ -306,7 +306,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
      :thread
      (make-thread
       #'(lambda ()
-          (m--debug "m-process..3")
+          (m--debug "m-process..3 %s" name)
           (let* (completed
                  (proc
                   (make-process
@@ -314,44 +314,44 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
                    :command (cons program program-args)
                    :connection-type 'pipe
                    :filter #'(lambda (_proc x)
-                               (m--debug "m-process..4 %S" x)
+                               (m--debug "m-process..4 %s %S" name x)
                                (ts-queue-push output x)
-                               (m--debug "m-process..5")
+                               (m--debug "m-process..5 %s" name)
                                )
                    :sentinel #'(lambda (_proc event)
-                                 (m--debug "m-process..6 %S" event)
+                                 (m--debug "m-process..6 %s %S" name event)
                                  (ts-queue-close output)
-                                 (m--debug "m-process..7")
+                                 (m--debug "m-process..7 %s" name)
                                  (setq completed t)))))
 
-            (m--debug "m-process..8")
+            (m--debug "m-process..8 %s" name)
             (cl-loop for str = (progn
-                                 (m--debug "m-process..9 %S")
+                                 (m--debug "m-process..9 %s" name)
                                  (let ((x (ts-queue-pop input)))
-                                   (m--debug "m-process..10 %S" x)
+                                   (m--debug "m-process..10 %s %S" name x)
                                    x))
                      until     (progn
-                                 (m--debug "m-process..11 %S" str)
+                                 (m--debug "m-process..11 %s %S" name str)
                                  (let ((x (m-eof-p str)))
-                                   (m--debug "m-process..12 %S" x)
+                                   (m--debug "m-process..12 %s %S" name x)
                                    x))
                      do        (progn
-                                 (m--debug "m-process..13 %S" str)
+                                 (m--debug "m-process..13 %s %S" name str)
                                  (process-send-string proc str))
                      finally   (progn
-                                 (m--debug "m-process..14")
+                                 (m--debug "m-process..14 %s" name)
                                  (process-send-eof proc)))
 
-            (m--debug "m-process..15")
+            (m--debug "m-process..15 %s" name)
             (while (not completed)
-              (m--debug "m-process..16 %S")
+              (m--debug "m-process..16 %s" name)
               (thread-yield)
-              (m--debug "m-process..17 %S")
+              (m--debug "m-process..17 %s" name)
               (accept-process-output proc nil 100)
-              (m--debug "m-process..18 %S")
+              (m--debug "m-process..18 %s" name)
               )
 
-            (m--debug "m-process..19 %S")
+            (m--debug "m-process..19 %s" name)
             ))
       name))))
 
