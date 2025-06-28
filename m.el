@@ -5,6 +5,7 @@
 ;;; Code:
 
 (require 'ts-queue)
+(require 'generator)
 
 (defsubst m--debug (&rest args)
   (when ts-queue-debug (apply #'message args)))
@@ -214,6 +215,21 @@ this a cartesian closed category of connected streaming machines."
 
 (defalias 'm-to-list 'm-drain)
 
+(defun m-for (machine func)
+  "For every output of MACHINE, call FUNC for side-effects."
+  (declare (indent 1))
+  (cl-loop for x = (m-await machine)
+           until (m-eof-p x)
+           do (funcall func x)
+           finally (m-join machine)))
+
+(ert-deftest m-for-test ()
+  (m-for (m-from-list '(1 2 3))
+    #'(lambda (x)
+        (should (>= x 1))
+        (should (<= x 3))))
+  (should (null (thread-last-error t))))
+
 (defun m-map (func machine)
   (m--debug "m-map..1 %S %s" func (machine-name machine))
   (let* ((name (format "m-map %s" (machine-name machine)))
@@ -241,6 +257,81 @@ this a cartesian closed category of connected streaming machines."
     (should (= 4 (m-await m)))
     (should (m-output-closed-p m))
     (m-join m))
+  (should (null (thread-last-error t))))
+
+(iter-defun m-generator (machine)
+  ;; We cannot use `m-for' here, because it runs afoul of Emacs's detection of
+  ;; the use of `iter-yield' inside a generator.
+  (cl-loop for x = (m-await machine)
+           until (m-eof-p x)
+           do (iter-yield x)
+           finally (m-join machine)))
+
+(ert-deftest m-generator-test ()
+  (let ((g (m-generator (m-from-list '(1 2 3)))))
+    (should (= 1 (iter-next g)))
+    (should (= 2 (iter-next g)))
+    (should (= 3 (iter-next g)))
+    (condition-case x
+        (iter-next g)
+      (iter-end-of-sequence
+       (should (null (cdr x)))))))
+
+(defun m-iterator (iter)
+  (m--debug "m-iterator..1")
+  (let* ((name "m-iterator")
+         (output (ts-queue-create :name (concat name " (output)"))))
+    (m--debug "m-iterator..2")
+    (make-machine
+     :name name
+     :input nil
+     :output output
+     :thread
+     (make-thread
+      #'(lambda ()
+          (m--debug "m-iterator..3")
+          (condition-case e
+              (progn
+                (m--debug "m-iterator..4")
+                (cl-loop for x = (iter-next iter)
+                         do (progn
+                              (m--debug "m-iterator..5 %S %S" output x)
+                              (ts-queue-push output x)))
+                (m--debug "m-iterator..6"))
+            (iter-end-of-sequence
+             (m--debug "m-iterator..7")
+             (ts-queue-close output)
+             (m--debug "m-iterator..8")))
+          (m--debug "m-iterator..9")
+          )
+      name))))
+
+(ert-deftest m-iterator-test ()
+  (setq ts-queue-debug nil)
+  (m--debug "m-iterator-test..1")
+  (let ((m (m-iterator (funcall
+                        (iter-lambda ()
+                          (m--debug "m-iterator-test..2")
+                          (iter-yield 1)
+                          (m--debug "m-iterator-test..3")
+                          (iter-yield 2)
+                          (m--debug "m-iterator-test..4")
+                          (iter-yield 3)
+                          (m--debug "m-iterator-test..5")
+                          )))))
+    (m--debug "m-iterator-test..6")
+    (should (= 1 (m-await m)))
+    (m--debug "m-iterator-test..7")
+    (should (= 2 (m-await m)))
+    (m--debug "m-iterator-test..8")
+    (should (= 3 (m-await m)))
+    (m--debug "m-iterator-test..9")
+    (should (m-output-closed-p m))
+    (m--debug "m-iterator-test..10")
+    (m-join m)
+    (m--debug "m-iterator-test..11")
+    )
+  (m--debug "m-iterator-test..12")
   (should (null (thread-last-error t))))
 
 ;;; Example machines
