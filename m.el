@@ -215,6 +215,57 @@ this a cartesian closed category of connected streaming machines."
 
 (defalias 'm-to-list 'm-drain)
 
+(defun m-take (n machine)
+  "Take at most N from the given MACHINE.
+If the MACHINE yields fewer than N elements, this machine yields that
+same number of elements."
+  (m--debug "m-take..1 %s %s" n (machine-name machine))
+  (let* ((name (format "m-take %s %s" n (machine-name machine)))
+         (output (ts-queue-create :name (concat name " (output)"))))
+    (m--debug "m-take..2 %s" name)
+    (make-machine
+     :name name
+     :input (machine-input machine)
+     :output output
+     :thread
+     (make-thread
+      #'(lambda ()
+          (m--debug "m-take..3 %s" name)
+          (cl-loop for i from 1 to n
+                   for x = (m-await machine)
+                   until (m-eof-p x)
+                   do (ts-queue-push output x)
+                   finally (progn
+                             (ts-queue-close output)
+                             (m-join machine)))
+          (m--debug "m-take..4 %s" name)
+          )
+      name))))
+
+(ert-deftest m-take-test ()
+  (let ((m (m-take 2 (m-from-list '(1 2 3 4 5)))))
+    (should (= 1 (m-await m)))
+    (should (= 2 (m-await m)))
+    (should (m-output-closed-p m))
+    (m-join m))
+  (should (null (thread-last-error t))))
+
+(defun m-head (machine)
+  (m-take 1 machine))
+
+(defun m-drop (n machine))
+
+(defun m-series (left right)
+  "Like `m-compose', but RIGHT is not sent input until LEFT is finished.")
+
+(defun m-mapreduce (reduction &rest machines))
+
+(defun m-concat (machines))
+
+(defun m-fix (func))
+
+(defun m-unfold (func seed))
+
 (defun m-for (machine func)
   "For every output of MACHINE, call FUNC for side-effects."
   (declare (indent 1))
