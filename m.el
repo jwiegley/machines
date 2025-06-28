@@ -79,9 +79,7 @@ This should only ever be called once, and will block until it sees the
 closure token, so only call this in conditions where you know exactly
 when to expect that the output is closed. Generally this is only useful
 for testing."
-  (let ((head (m-peek machine)))
-    (or (null (car head))
-        (ts-queue-at-eof (cdr head)))))
+  (ts-queue-closed-p (machine-output machine)))
 
 (defsubst m-identity ()
   "The identity machine does nothing, just forwards input to output."
@@ -106,8 +104,10 @@ This operation follows monoidal laws with respect to m-identity."
    :output (machine-output right)
    :thread (make-thread
             #'(lambda ()
-                (cl-loop for xs = (m-await left)
-                         do (m-send right xs))))))
+                (cl-loop for x = (m-await left)
+                         until (ts-queue-at-eof x)
+                         do (m-send right x)
+                         finally (m-close-input right))))))
 
 (ert-deftest m-compose-identities-test ()
   (let ((m (m-compose (m-identity) (m-identity))))

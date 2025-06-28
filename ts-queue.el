@@ -46,6 +46,11 @@ Returns one of two cons cells:
         '(nil . nil)
       (cons t (fifo-head (ts-queue-fifo queue))))))
 
+(defun ts-queue-closed-p (queue)
+  (let ((head (ts-queue-peek queue)))
+    (or (null (car head))
+        (ts-queue-at-eof (cdr head)))))
+
 (ert-deftest ts-queue-push-test ()
   (let ((queue (ts-queue-create :fifo (fifo-from-list '(1 2 3)))))
     (ts-queue-push queue 4)
@@ -65,7 +70,7 @@ Returns one of two cons cells:
     (should (= 1 (ts-queue-pop queue)))
     (should (= 2 (ts-queue-pop queue)))
     (should (= 3 (ts-queue-pop queue)))
-    (should (ts-queue-at-eof (ts-queue-pop queue)))))
+    (should (ts-queue-closed-p queue))))
 
 (ert-deftest ts-queue-with-multi-threads-test ()
   (let* ((queue (ts-queue-create))
