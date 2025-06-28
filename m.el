@@ -254,6 +254,13 @@ number of elements."
 (defun m-head (machine)
   (m-take 1 machine))
 
+(ert-deftest m-head-test ()
+  (let ((m (m-head (m-from-list '(1 2 3 4 5)))))
+    (should (= 1 (m-await m)))
+    (should (m-output-closed-p m))
+    (m-join m))
+  (should (null (thread-last-error t))))
+
 (defun m-drop (n machine)
   "Drop the first N elements from the given MACHINE.
 If MACHINE yields fewer than N elements, this machine yields none."
