@@ -160,8 +160,9 @@ this a cartesian closed category of connected streaming machines."
                   (cl-loop for x = (m-await left)
                            until (m-eof-p x)
                            do (m-send right x)
-                           finally (m-close-input right))
-                  (m-join left))
+                           finally (progn
+                                     (m-close-input right)
+                                     (m-join left))))
               name))))
 
 (defalias 'm-connect 'm-compose)
@@ -217,8 +218,8 @@ this a cartesian closed category of connected streaming machines."
 
 (defun m-take (n machine)
   "Take at most N from the given MACHINE.
-If the MACHINE yields fewer than N elements, this machine yields that
-same number of elements."
+If MACHINE yields fewer than N elements, this machine yields that same
+number of elements."
   (m--debug "m-take..1 %s %s" n (machine-name machine))
   (let* ((name (format "m-take %s %s" n (machine-name machine)))
          (output (ts-queue-create :name (concat name " (output)"))))
@@ -253,7 +254,45 @@ same number of elements."
 (defun m-head (machine)
   (m-take 1 machine))
 
-(defun m-drop (n machine))
+(defun m-drop (n machine)
+  "Drop the first N elements from the given MACHINE.
+If MACHINE yields fewer than N elements, this machine yields none."
+  (m--debug "m-drop..1 %s %s" n (machine-name machine))
+  (let* ((name (format "m-drop %s %s" n (machine-name machine)))
+         (output (ts-queue-create :name (concat name " (output)"))))
+    (m--debug "m-drop..2 %s" name)
+    (make-machine
+     :name name
+     :input (machine-input machine)
+     :output output
+     :thread
+     (make-thread
+      #'(lambda ()
+          (m--debug "m-drop..3 %s" name)
+          (let (ended)
+            (cl-loop for i from 1 to n
+                     for x = (m-await machine)
+                     until (and (m-eof-p x) (setq ended t)))
+            (m--debug "m-drop..4 %s" name)
+            (unless ended
+              (cl-loop for x = (m-await machine)
+                       until (m-eof-p x)
+                       do (ts-queue-push output x)
+                       finally (progn
+                                 (ts-queue-close output)
+                                 (m-join machine)))))
+          (m--debug "m-drop..5 %s" name)
+          )
+      name))))
+
+(ert-deftest m-drop-test ()
+  (let ((m (m-drop 2 (m-from-list '(1 2 3 4 5)))))
+    (should (= 3 (m-await m)))
+    (should (= 4 (m-await m)))
+    (should (= 5 (m-await m)))
+    (should (m-output-closed-p m))
+    (m-join m))
+  (should (null (thread-last-error t))))
 
 (defun m-series (left right)
   "Like `m-compose', but RIGHT is not sent input until LEFT is finished.")
