@@ -9,6 +9,11 @@
 (require 'ts-queue)
 (require 'generator)
 
+(defun should-be-quiescent ()
+  ;; (should (null (delete main-thread (all-threads))))
+  ;; (should (null (process-list)))
+  )
+
 (defsubst m--debug (&rest args)
   (when ts-queue-debug (apply #'message args))
   (should (null (thread-last-error t))))
@@ -162,8 +167,9 @@ for testing."
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)
-    (m--debug "m-identity-test...done")))
+    (m-join m))
+  (should-be-quiescent)
+  (m--debug "m-identity-test...done"))
 
 (defun m-compose (left right)
   "Compose the LEFT machine with the RIGHT.
@@ -203,8 +209,9 @@ this a cartesian closed category of connected streaming machines."
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)
-    (m--debug "m-compose-identities-test...done")))
+    (m-join m))
+  (should-be-quiescent)
+  (m--debug "m-compose-identities-test...done"))
 
 (defun m-iterator (iter)
   (m--debug "m-iterator..1")
@@ -275,7 +282,7 @@ this a cartesian closed category of connected streaming machines."
     (m-join m)
     (m--debug "m-iterator-test..11")
     )
-  (m--debug "m-iterator-test..12")
+  (should-be-quiescent)
   (m--debug "m-iterator-test...done"))
 
 (defun m-from-list (xs)
@@ -299,6 +306,7 @@ this a cartesian closed category of connected streaming machines."
     (should (= 5 (m-await m)))
     (should (m-output-closed-p m))
     (m-join m))
+  (should-be-quiescent)
   (m--debug "m-from-list-test...done"))
 
 (defalias 'm-to-list 'm-drain)
@@ -320,7 +328,9 @@ this a cartesian closed category of connected streaming machines."
     (condition-case x
         (iter-next g)
       (iter-end-of-sequence
-       (should (null (cdr x)))))))
+       (should (null (cdr x))))))
+  (should-be-quiescent)
+  (m--debug "m-generator-test...done"))
 
 (defun m-take (n machine)
   "Take at most N from the given MACHINE.
@@ -366,6 +376,7 @@ number of elements."
     (m-join m)
     (m--debug "m-take-test..5")
     )
+  (should-be-quiescent)
   (m--debug "m-take-test..done"))
 
 (defun m-head (machine)
@@ -377,6 +388,7 @@ number of elements."
     (should (= 1 (m-await m)))
     (should (m-output-closed-p m))
     (m-join m))
+  (should-be-quiescent)
   (m--debug "m-head-test..done"))
 
 (defun m-drop (n machine)
@@ -434,6 +446,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
     (should (= 5 (m-await m)))
     (m--debug "m-drop-test..4")
     (should (m-output-closed-p m)))
+  (should-be-quiescent)
   (m--debug "m-drop-test..done"))
 
 (iter-defun m-fix (func start)
@@ -471,6 +484,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
     (m-join m)
     (m--debug "m-fibonacci-test..8")
     )
+  (should-be-quiescent)
   (m--debug "m-fibonacci-test..done"))
 
 (defun m-series (left right)
@@ -496,6 +510,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
     #'(lambda (x)
         (should (>= x 1))
         (should (<= x 3))))
+  (should-be-quiescent)
   (m--debug "m-for-test..done"))
 
 (defun m-map (func machine)
@@ -526,6 +541,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
     (should (= 4 (m-await m)))
     (should (m-output-closed-p m))
     (m-join m))
+  (should-be-quiescent)
   (m--debug "m-map-test..done"))
 
 ;;; Example machines
@@ -562,8 +578,9 @@ FUNC."
     (m-close-input m)
     (should (= 6 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)
-    (m--debug "m-funcall-test..done")))
+    (m-join m))
+  (should-be-quiescent)
+  (m--debug "m-funcall-test..done"))
 
 (defun m-process (program &rest program-args)
   "Create a machine from a process. See `start-process' for details.
@@ -636,6 +653,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (should (string= "Hello\n" (m-await m)))
     (should (m-output-closed-p m))
     (m-join m))
+  (should-be-quiescent)
   (m--debug "m-process-test..done"))
 
 (ert-deftest m-process-drain-test ()
@@ -649,6 +667,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
       (string= "Hello there\n")
       should)
     (m-join m))
+  (should-be-quiescent)
   (m--debug "m-process-drain-test..done"))
 
 (ert-deftest m-process-compose-test ()
@@ -663,6 +682,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (should (string= "2\n" (m-await m)))
     (should (m-output-closed-p m))
     (m-join m))
+  (should-be-quiescent)
   (m--debug "m-process-compose-test..done"))
 
 (provide 'm)
