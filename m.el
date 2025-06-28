@@ -439,7 +439,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
                                  (m--debug "m-drop..10 %S" name)
                                  (ts-queue-close output)
                                  (m--debug "m-drop..11 %S" name)
-                                 ;; (m-stop machine)
+                                 (m-stop machine)
                                  (m--debug "m-drop..12 %S" name)))))
           (m--debug "m-drop..done %S" name)
           )
@@ -464,22 +464,25 @@ If MACHINE yields fewer than N elements, this machine yields none."
   (m--debug "m-fix..1 %S %S" func start)
   (cl-destructuring-bind (name _ output)
       (m--parts "m-fix" :no-input t :output-size 1)
-    (m--debug "m-fix..2")
-    (make-machine
-     :name name
-     :input nil
-     :output output
-     :thread
-     (make-thread
-      #'(lambda ()
-          (m--debug "m-fix..3")
-          (cl-loop for x = start then (funcall func x)
-                   do (ts-queue-push output x))
-          (m--debug "m-fix..4")
-          (ts-queue-close output)
-          (m--debug "m-fix..done")
-          )
-      name))))
+    (let ((stopped (list nil)))
+      (m--debug "m-fix..2")
+      (make-machine
+       :name name
+       :input nil
+       :output output
+       :thread
+       (make-thread
+        #'(lambda ()
+            (m--debug "m-fix..3")
+            (cl-loop for x = start then (funcall func x)
+                     until (car stopped)
+                     do (ts-queue-push output x))
+            (m--debug "m-fix..4")
+            (ts-queue-close output)
+            (m--debug "m-fix..done")
+            )
+        name)
+       :stop stopped))))
 
 (defun m-fibonacci ()
   "Return a Fibonacci series machine."
@@ -492,7 +495,7 @@ If MACHINE yields fewer than N elements, this machine yields none."
 
 (ert-deftest m-fibonacci-test ()
   (message "m-fibonacci-test...")
-  ;; (setq ts-queue-debug t)
+  (setq ts-queue-debug t)
   (let ((m (m-take 5 (m-fibonacci))))
     (m--debug "m-fibonacci-test..1")
     (should (= 1 (m-await m)))
