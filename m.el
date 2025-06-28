@@ -16,9 +16,9 @@
            until (ts-queue-at-eof x)
            collect x))
 
-(defun m--connect (input output)
+(defun m--connect-queues (input output)
   "Drain the INPUT queue into the OUTPUT queue."
-  (m--debug "m--connect..1 %S %S" input output)
+  (m--debug "m--connect-queues..1 %S %S" input output)
   (cl-loop for x = (ts-queue-pop input)
            until (ts-queue-at-eof x)
            do (ts-queue-push output x)
@@ -37,6 +37,10 @@ when passed to `ts-queue-at-eof', while writing to its output until
 finished, after which it should close the output queue using
 `ts-queue-close'. At this point the thread should exit."
   name input output thread)
+
+(defun m-join (machine)
+  "Join on the thread for MACHINE."
+  (thread-join (machine-thread machine)))
 
 (defun m-send (machine value)
   "Send the VALUE to the given MACHINE."
@@ -82,7 +86,7 @@ finished, after which it should close the output queue using
       machine
     (m-close-output machine)))
 
-(defun m-fork (machine1 machine2 &rest machines)
+(defun m-fanout (machine1 machine2 &rest machines)
   "Create a machine that sends its input to all the machines.
 The results are transmitted with a tag to indicate which machine they
 originated from:
@@ -91,7 +95,7 @@ originated from:
   (1 . value)
 ")
 
-(defun m-join (machine1 machine2 &rest machines))
+(defun m-fanin (machine1 machine2 &rest machines))
 
 (defalias 'm-eof-p 'ts-queue-at-eof)
 
@@ -120,7 +124,7 @@ for testing."
      :output output
      :thread
      (make-thread
-      #'(lambda () (m--connect input output))
+      #'(lambda () (m--connect-queues input output))
       name))))
 
 (ert-deftest m-identity-test ()
@@ -133,6 +137,7 @@ for testing."
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
     (should (m-output-closed-p m))
+    (m-join m)
     (should (null (thread-last-error t)))))
 
 (defun m-compose (left right)
@@ -170,6 +175,7 @@ this a cartesian closed category of connected streaming machines."
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
     (should (m-output-closed-p m))
+    (m-join m)
     (should (null (thread-last-error t)))))
 
 (defun m-from-list (xs)
@@ -201,7 +207,8 @@ this a cartesian closed category of connected streaming machines."
     (should (= 3 (m-await m)))
     (should (= 4 (m-await m)))
     (should (= 5 (m-await m)))
-    (should (m-output-closed-p m)))
+    (should (m-output-closed-p m))
+    (m-join m))
   (should (null (thread-last-error t))))
 
 (defalias 'm-to-list 'm-drain)
@@ -241,12 +248,12 @@ this a cartesian closed category of connected streaming machines."
       name))))
 
 (ert-deftest m-map-test ()
-  (setq ts-queue-debug nil)
   (let ((m (m-map #'1+ (m-from-list '(1 2 3)))))
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
     (should (= 4 (m-await m)))
-    (should (m-output-closed-p m)))
+    (should (m-output-closed-p m))
+    (m-join m))
   (should (null (thread-last-error t))))
 
 ;;; Example machines
@@ -282,6 +289,7 @@ FUNC."
     (m-close-input m)
     (should (= 6 (m-await m)))
     (should (m-output-closed-p m))
+    (m-join m)
     (should (null (thread-last-error t)))))
 
 (defun m-process (program &rest program-args)
@@ -352,20 +360,24 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (m-send m "Hello\n")
     (m-close-input m)
     (should (string= "Hello\n" (m-await m)))
-    (should (m-output-closed-p m)))
+    (should (m-output-closed-p m))
+    (m-join m))
   (should (null (thread-last-error t))))
 
 (ert-deftest m-process-drain-test ()
-  (thread-last
-    (m-process "echo" "Hello there")
-    (m-source)
-    (m-drain)
-    (mapconcat #'identity)
-    (string= "Hello there\n")
-    should)
+  (let ((m (m-process "echo" "Hello there")))
+    (thread-last
+      m
+      (m-source)
+      (m-drain)
+      (mapconcat #'identity)
+      (string= "Hello there\n")
+      should)
+    (m-join m))
   (should (null (thread-last-error t))))
 
 (ert-deftest m-process-compose-test ()
+  (setq ts-queue-debug nil)
   (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
                       (m-process "wc" "-l"))))
     (m-send m "foo\n")
@@ -373,7 +385,8 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (m-send m "foo\n")
     (m-close-input m)
     (should (string= "2\n" (m-await m)))
-    (should (m-output-closed-p m)))
+    (should (m-output-closed-p m))
+    (m-join m))
   (should (null (thread-last-error t))))
 
 (provide 'm)
