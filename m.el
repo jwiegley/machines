@@ -380,7 +380,7 @@ number of elements."
                              (m--debug "m-take..9 %S" name)
                              (ts-queue-close output)
                              (m--debug "m-take..10 %S" name)
-                             ;; (m-stop machine)
+                             (m-stop machine)
                              (m--debug "m-take..11 %S" name)
                              ))
           (m--debug "m-take..done %S" name)
