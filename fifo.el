@@ -44,13 +44,14 @@ This raises an error if the FIFO is empty."
 
 (defun fifo-length (fifo)
   "Return the number of elements in FIFO."
-  (let* ((dll (fifo-dllist fifo))
-         (next (dllist-next dll))
-         (len (if next 1 0)))
-    (while (and dll next (not (eql dll next)))
-      (cl-incf len)
-      (setq next (dllist-next next)))
-    len))
+  (if-let* ((dll (fifo-dllist fifo)))
+      (let* ((next (dllist-next dll))
+             (len (if next 1 0)))
+        (while (and dll next (not (eql dll next)))
+          (cl-incf len)
+          (setq next (dllist-next next)))
+        len)
+    0))
 
 (defun fifo-head (fifo)
   "Return the number of elements in FIFO."
