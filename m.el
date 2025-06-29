@@ -185,7 +185,7 @@ OUTPUT-SIZE is the output queue size, if OUTPUT is nil."
   (m-basic-machine "m-identity" #'m--connect-queues))
 
 (defvar m--test-include
-  ;; '(m-filter)
+  ;; '(m-process-compose)
   t
   )
 
@@ -267,7 +267,7 @@ making this a cartesian closed category of connected streaming machines."
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 (defun m-iterator (iter)
   (m-basic-machine "m-iterator"
@@ -325,9 +325,7 @@ making this a cartesian closed category of connected streaming machines."
     (m--debug "m-iterator-test..9")
     (should (m-output-closed-p m))
     (m--debug "m-iterator-test..10")
-    (m-join m)
-    (m--debug "m-iterator-test..11")
-    ))
+    (m-stop m)))
 
 (defun m-from-list-iter (xs)
   (m-iterator
@@ -348,7 +346,7 @@ making this a cartesian closed category of connected streaming machines."
     (should (= 4 (m-await m)))
     (should (= 5 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 (defun m-from-list (xs)
   (m-basic-machine "m-from-list"
@@ -377,7 +375,7 @@ making this a cartesian closed category of connected streaming machines."
     (should (= 4 (m-await m)))
     (should (= 5 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 (defalias 'm-to-list 'm-drain)
 
@@ -388,7 +386,7 @@ making this a cartesian closed category of connected streaming machines."
            until (or (m-eof-p x)
                      (flag-raised (machine-stopped machine)))
            do (iter-yield x)
-           finally (m-join machine)))
+           finally (m-stop machine)))
 
 (m--test m-generator
   (let ((g (m-generator (m-from-list '(1 2 3)))))
@@ -443,9 +441,7 @@ number of elements."
     (m--debug "m-take-test..3")
     (should (m-output-closed-p m))
     (m--debug "m-take-test..4")
-    (m-join m)
-    (m--debug "m-take-test..5")
-    ))
+    (m-stop m)))
 
 (defun m-head (machine)
   (m-take 1 machine))
@@ -500,7 +496,8 @@ If MACHINE yields fewer than N elements, this machine yields none."
     (m--debug "m-drop-test..3")
     (should (= 5 (m-await m)))
     (m--debug "m-drop-test..4")
-    (should (m-output-closed-p m))))
+    (should (m-output-closed-p m))
+    (m-stop m)))
 
 (iter-defun m--iter-fix (func start)
   "The fixpoint combinator, implemented as an iterator.
@@ -563,9 +560,7 @@ decide whether two of the same answer in a row indicates completion."
     (m--debug "m-fibonacci-test..7")
     (should (m-output-closed-p m))
     (m--debug "m-fibonacci-test..8")
-    (m-join m)
-    (m--debug "m-fibonacci-test..9")
-    ))
+    (m-stop m)))
 
 (defun m-fibonacci-iter ()
   "Return a Fibonacci series machine."
@@ -594,9 +589,7 @@ decide whether two of the same answer in a row indicates completion."
     (m--debug "m-fibonacci-iter-test..7")
     (should (m-output-closed-p m))
     (m--debug "m-fibonacci-iter-test..8")
-    (m-join m)
-    (m--debug "m-fibonacci-iter-test..9")
-    ))
+    (m-stop m)))
 
 (defun m-series (left right)
   "Like `m-compose', but RIGHT is not sent input until LEFT is finished.")
@@ -614,7 +607,7 @@ decide whether two of the same answer in a row indicates completion."
            until (or (m-eof-p x)
                      (flag-raised (machine-stopped machine)))
            do (funcall func x)
-           finally (m-join machine)))
+           finally (m-stop machine)))
 
 (m--test m-for
   (m-for (m-from-list '(1 2 3))
@@ -641,7 +634,7 @@ decide whether two of the same answer in a row indicates completion."
     (should (= 3 (m-await m)))
     (should (= 4 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 (defun m-filter (func machine)
   (let ((name (format "m-filter %s" (machine-name machine))))
@@ -660,7 +653,7 @@ decide whether two of the same answer in a row indicates completion."
   (let ((m (m-filter #'cl-evenp (m-from-list '(1 2 3)))))
     (should (= 2 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 ;;; Example machines
 
@@ -687,7 +680,7 @@ FUNC."
     (m-close m)
     (should (= 6 (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 (defun m-process (program &rest program-args)
   "Create a machine from a process. See `start-process' for details.
@@ -751,7 +744,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (m-close m)
     (should (string= "Hello\n" (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 (m--test m-process-drain
   (let ((m (m-process "echo" "Hello there")))
@@ -762,7 +755,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
       (mapconcat #'identity)
       (string= "Hello there\n")
       should)
-    (m-join m)))
+    (m-stop m)))
 
 (m--test m-process-compose
   (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
@@ -773,7 +766,7 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
     (m-close m)
     (should (string= "2\n" (m-await m)))
     (should (m-output-closed-p m))
-    (m-join m)))
+    (m-stop m)))
 
 (provide 'm)
 
