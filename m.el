@@ -18,18 +18,20 @@ It should either be non-nil for active, or nil for inactive."
   (when ts-queue-debug (apply #'message args))
   (should (null (thread-last-error t))))
 
-(defun m--drain-queue (input)
+(defun m--drain-queue (stopped input)
   "Drain the INPUT queue and return the list of its values."
   (m--debug "m--drain-queue..1 %S" (ts-queue-name input))
   (cl-loop for x = (ts-queue-pop input)
-           until (ts-queue-at-eof x)
+           until (or (ts-queue-at-eof x)
+                     (flag-raised stopped))
            collect x))
 
-(defun m--connect-queues (input output &optional func stopped)
+(cl-defun m--connect-queues (input output stopped &key func pred)
   "Drain the INPUT queue into the OUTPUT queue."
-  (m--debug "m--connect-queues..1 %S %S %S"
+  (m--debug "m--connect-queues..1 %S %S %S %S"
             (ts-queue-name input)
-            (ts-queue-name output) func)
+            (ts-queue-name output)
+            func pred)
   (cl-loop for x = (progn
                      (m--debug "m--connect-queues..2")
                      (let ((x (ts-queue-pop input)))
@@ -40,13 +42,17 @@ It should either be non-nil for active, or nil for inactive."
                      (or (ts-queue-at-eof x)
                          (flag-raised stopped)))
            do      (progn
-                     (m--debug "m--connect-queues..5")
-                     (ts-queue-push output (funcall (or func #'identity) x))
-                     (m--debug "m--connect-queues..6"))
+                     (m--debug "m--connect-queues..5 %S %S" pred x)
+                     (when (or (null pred)
+                               (and (not (eq x :ts-queue--eof))
+                                    (funcall pred x)))
+                       (m--debug "m--connect-queues..6")
+                       (ts-queue-push output (funcall (or func #'identity) x)))
+                     (m--debug "m--connect-queues..7"))
            finally (progn
-                     (m--debug "m--connect-queues..7")
+                     (m--debug "m--connect-queues..8")
                      (ts-queue-close output)
-                     (m--debug "m--connect-queues..8")))
+                     (m--debug "m--connect-queues..9")))
   (m--debug "m--connect-queues..done"))
 
 (cl-defstruct (machine (:copier nil))
@@ -92,7 +98,7 @@ finished, after which it should close the output queue using
 (defun m-drain (machine)
   "Drain the output of MACHINE into a list."
   (m--debug "m-drain..1 %S" (machine-name machine))
-  (m--drain-queue (machine-output machine)))
+  (m--drain-queue (machine-stopped machine) (machine-output machine)))
 
 (defun m-stop (machine)
   "Stop MACHINE, flushing any pending output first."
@@ -176,13 +182,10 @@ OUTPUT-SIZE is the output queue size, if OUTPUT is nil."
 
 (defun m-identity ()
   "The identity machine does nothing, just forwards input to output."
-  (m-basic-machine "m-identity"
-    #'(lambda (input output stopped)
-        (m--connect-queues input output nil stopped))))
+  (m-basic-machine "m-identity" #'m--connect-queues))
 
 (defvar m--test-include
-  ;; '(m-identity
-  ;;   m-compose-identities)
+  ;; '(m-filter)
   t
   )
 
@@ -195,7 +198,10 @@ OUTPUT-SIZE is the output queue size, if OUTPUT is nil."
          (message ,(concat test-name "..."))
          (let ((threads (all-threads))
                (procs (process-list)))
-           ,@body
+           (setq ts-queue-debug ,(listp m--test-include))
+           (unwind-protect
+               ,@body
+             (setq ts-queue-debug nil))
            ;; (should (equal threads (all-threads)))
            ;; (should (equal procs (process-list)))
            )
@@ -261,7 +267,7 @@ making this a cartesian closed category of connected streaming machines."
     (should (= 2 (m-await m)))
     (should (= 3 (m-await m)))
     (should (m-output-closed-p m))
-    (m-stop m)))
+    (m-join m)))
 
 (defun m-iterator (iter)
   (m-basic-machine "m-iterator"
@@ -379,7 +385,8 @@ making this a cartesian closed category of connected streaming machines."
   ;; We cannot use `m-for' here, because it runs afoul of Emacs's detection of
   ;; the use of `iter-yield' inside a generator.
   (cl-loop for x = (m-await machine)
-           until (m-eof-p x)
+           until (or (m-eof-p x)
+                     (flag-raised (machine-stopped machine)))
            do (iter-yield x)
            finally (m-join machine)))
 
@@ -457,10 +464,9 @@ If MACHINE yields fewer than N elements, this machine yields none."
       #'(lambda (input output stopped)
           (m--debug "m-drop..3 %S" name)
           (let (ended)
-            (cl-loop
-             for i from 1 to n
-             for x = (m-await machine)
-             until (and (m-eof-p x) (setq ended t)))
+            (cl-loop for i from 1 to n
+                     for x = (m-await machine)
+                     until (and (m-eof-p x) (setq ended t)))
             (m--debug "m-drop..4 %S" name)
             (unless ended
               (cl-loop
@@ -506,27 +512,27 @@ decide whether two of the same answer in a row indicates completion."
            do (iter-yield x)))
 
 (defun m-fix (func start)
-  (m-basic-machine (format "m-fix %S" func)
+  (m-basic-machine "m-fix"
     #'(lambda (_input output stopped)
-        (m--debug "m-fix..3 %S" func)
+        (m--debug "m-fix..1")
         (cl-loop
          for x = start
          then (progn
-                (m--debug "m-fix..4 %S %S" func x)
+                (m--debug "m-fix..2 %S" x)
                 (let ((y (funcall func x)))
-                  (m--debug "m-fix..5 %S %S %S" func x y)
+                  (m--debug "m-fix..3 %S %S" x y)
                   y))
          until (progn
-                 (m--debug "m-fix..6 %S %S" func stopped)
+                 (m--debug "m-fix..4 %S" stopped)
                  (flag-raised stopped))
          do (progn
-              (m--debug "m-fix..7 %S %S" func x)
+              (m--debug "m-fix..5 %S" x)
               (ts-queue-push output x)
-              (m--debug "m-fix..8 %S %S" func x)
+              (m--debug "m-fix..6 %S" x)
               ))
-        (m--debug "m-fix..9 %S" func)
+        (m--debug "m-fix..7")
         (ts-queue-close output)
-        (m--debug "m-fix..done %S" func)
+        (m--debug "m-fix..done")
         )
     :no-input t
     :output-size 1))
@@ -571,25 +577,25 @@ decide whether two of the same answer in a row indicates completion."
                         (setq prev-prev prev)))
                   1))))
 
-(m--test m-fibonacci-test
+(m--test m-fibonacci-iter
   (let ((m (m-take 6 (m-fibonacci-iter))))
-    (m--debug "m-fibonacci-test-iter..1")
+    (m--debug "m-fibonacci-iter-test..1")
     (should (= 1 (m-await m)))
-    (m--debug "m-fibonacci-test-iter..2")
+    (m--debug "m-fibonacci-iter-test..2")
     (should (= 1 (m-await m)))
-    (m--debug "m-fibonacci-test-iter..3")
+    (m--debug "m-fibonacci-iter-test..3")
     (should (= 2 (m-await m)))
-    (m--debug "m-fibonacci-test-iter..4")
+    (m--debug "m-fibonacci-iter-test..4")
     (should (= 3 (m-await m)))
-    (m--debug "m-fibonacci-test-iter..5")
+    (m--debug "m-fibonacci-iter-test..5")
     (should (= 5 (m-await m)))
-    (m--debug "m-fibonacci-test-iter..6")
+    (m--debug "m-fibonacci-iter-test..6")
     (should (= 8 (m-await m)))
-    (m--debug "m-fibonacci-test-iter..7")
+    (m--debug "m-fibonacci-iter-test..7")
     (should (m-output-closed-p m))
-    (m--debug "m-fibonacci-test-iter..8")
+    (m--debug "m-fibonacci-iter-test..8")
     (m-join m)
-    (m--debug "m-fibonacci-test-iter..9")
+    (m--debug "m-fibonacci-iter-test..9")
     ))
 
 (defun m-series (left right)
@@ -605,7 +611,8 @@ decide whether two of the same answer in a row indicates completion."
   "For every output of MACHINE, call FUNC for side-effects."
   (declare (indent 1))
   (cl-loop for x = (m-await machine)
-           until (m-eof-p x)
+           until (or (m-eof-p x)
+                     (flag-raised (machine-stopped machine)))
            do (funcall func x)
            finally (m-join machine)))
 
@@ -620,7 +627,8 @@ decide whether two of the same answer in a row indicates completion."
     (m-basic-machine name
       #'(lambda (input output stopped)
           (m--debug "m-map..1 %S" name)
-          (m--connect-queues (machine-output machine) output func stopped)
+          (m--connect-queues
+           (machine-output machine) output stopped :func func)
           (m--debug "m-map..2 %S" name)
           (m-stop machine)
           (m--debug "m-map..done %S" name)
@@ -635,6 +643,25 @@ decide whether two of the same answer in a row indicates completion."
     (should (m-output-closed-p m))
     (m-join m)))
 
+(defun m-filter (func machine)
+  (let ((name (format "m-filter %s" (machine-name machine))))
+    (m-basic-machine name
+      #'(lambda (input output stopped)
+          (m--debug "m-filter..1 %S" name)
+          (m--connect-queues
+           (machine-output machine) output stopped :pred func)
+          (m--debug "m-filter..2 %S" name)
+          (m-stop machine)
+          (m--debug "m-filter..done %S" name)
+          )
+      :input (machine-input machine))))
+
+(m--test m-filter
+  (let ((m (m-filter #'cl-evenp (m-from-list '(1 2 3)))))
+    (should (= 2 (m-await m)))
+    (should (m-output-closed-p m))
+    (m-join m)))
+
 ;;; Example machines
 
 (cl-defun m-funcall (func &key (combine #'identity))
@@ -643,10 +670,10 @@ Since machine might receive their input piece-wise, the caller must
 specify a function to COMBINE a list of input into a final input for
 FUNC."
   (m-basic-machine "m-funcall"
-    #'(lambda (input output _stopped)
+    #'(lambda (input output stopped)
         (thread-last
           input
-          m--drain-queue
+          (m--drain-queue stopped)
           (funcall combine)
           (funcall func)
           (ts-queue-push output))
@@ -695,7 +722,8 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
                            x))
              until     (progn
                          (m--debug "m-process..11 %s %S" name str)
-                         (let ((x (m-eof-p str)))
+                         (let ((x (or (m-eof-p str)
+                                      (flag-raised stopped))))
                            (m--debug "m-process..12 %s %S" name x)
                            x))
              do        (progn
