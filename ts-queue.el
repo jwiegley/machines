@@ -7,48 +7,7 @@
 (require 'cl-macs)
 (require 'ert)
 (require 'fifo)
-
-(cl-defstruct (qsem
-               (:copier nil)
-               (:constructor qsem-new
-                             (&key
-                              (name "qsem")
-                              (mutex (make-mutex name))
-                              (ready (make-condition-variable mutex name))
-                              (size 1)
-                              (avail size))))
-  name mutex ready size avail)
-
-(defun qsem-acquire (qsem)
-  (ts-queue--debug "qsem-acquire..1 %S" (qsem-name qsem))
-  (with-mutex (qsem-mutex qsem)
-    (ts-queue--debug "qsem-acquire..2 %S" (qsem-name qsem))
-    (while (= (qsem-avail qsem) 0)
-      (ts-queue--debug "qsem-acquire..3 %S" (qsem-name qsem))
-      (condition-wait (qsem-ready qsem)))
-    (ts-queue--debug "qsem-acquire..4 %S %S" (qsem-name qsem) (qsem-avail qsem))
-    ;; (should (> (qsem-avail qsem) 0))
-    (ts-queue--debug "qsem-acquire..5 %S" (qsem-name qsem))
-    (cl-decf (qsem-avail qsem))
-    (ts-queue--debug "qsem-acquire..done %S" (qsem-name qsem))))
-
-(defun qsem-release (qsem)
-  (ts-queue--debug "qsem-release..1 %S" (qsem-name qsem))
-  (with-mutex (qsem-mutex qsem)
-    (ts-queue--debug "qsem-release..2 %S" (qsem-name qsem))
-    (cl-incf (qsem-avail qsem))
-    (ts-queue--debug "qsem-release..3 %S %S" (qsem-name qsem) (qsem-avail qsem))
-    ;; (should (<= (qsem-avail qsem) (qsem-size qsem)))
-    (ts-queue--debug "qsem-release..4 %S" (qsem-name qsem))
-    (condition-notify (qsem-ready qsem))
-    (ts-queue--debug "qsem-release..done %S" (qsem-name qsem))))
-
-(defmacro with-qsem (qsem &rest body)
-  `(unwind-protect
-       (progn
-         (qsem-acquire ,qsem)
-         ,@body)
-     (qsem-release ,qsem)))
+(require 'qsem)
 
 (cl-defstruct
     (ts-queue
@@ -79,13 +38,11 @@
     (qsem-acquire (ts-queue-slots queue)))
   (ts-queue--debug "ts-queue-push..2 %S %S" (ts-queue-name queue) elem)
   (with-mutex (ts-queue-mutex queue)
-    (ts-queue--debug "ts-queue-push..3 %S %S" (ts-queue-name queue) elem)
     (fifo-push (ts-queue-fifo queue) elem)
     (ts-queue--debug "ts-queue-push..4 %S %S" (ts-queue-name queue) elem)
     (condition-notify (ts-queue-pushed queue) t)
     (ts-queue--debug "ts-queue-push..5 %S %S" (ts-queue-name queue) elem)
     )
-  (ts-queue--debug "ts-queue-push..6 %S %S" (ts-queue-name queue) elem)
   (thread-yield)
   (ts-queue--debug "ts-queue-push..done %S %S" (ts-queue-name queue) elem))
 
@@ -101,7 +58,6 @@
 (defun ts-queue-pop (queue)
   (ts-queue--debug "ts-queue-pop..1 %S" (ts-queue-name queue))
   (with-mutex (ts-queue-mutex queue)
-    (ts-queue--debug "ts-queue-pop..2 %S" (ts-queue-name queue))
     (while (fifo-empty-p (ts-queue-fifo queue))
       (ts-queue--debug "ts-queue-pop..3 %S, slots available = %S"
                        (ts-queue-name queue)
