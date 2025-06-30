@@ -825,11 +825,11 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
                          (process-send-string proc str))
              finally   (progn
                          (m--debug "m-process..9 %S" name)
-                         (process-send-eof proc)))
+                         (when (process-live-p proc)
+                           (process-send-eof proc))))
 
             (m--debug "m-process..10 %S" name)
             (while (and (not completed)
-                        (process-live-p proc)
                         (not (m-stopped-p m)))
               (m--debug "m-process..11 %S" name)
               (thread-yield)
