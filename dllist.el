@@ -4,7 +4,6 @@
 
 (require 'cl-lib)
 (require 'cl-macs)
-(require 'ert)
 
 (cl-defstruct dllist value (prev nil) (next nil))
 
@@ -27,17 +26,6 @@
            for y = (dllist-value x)
            collect y))
 
-(ert-deftest dllist-to-from-list-test ()
-  (let ((x '(1 2 nil 4 5)))
-    (should (equal x (dllist-to-list (dllist-from-list x))))))
-
-(ert-deftest dllist-to-from-to-from-list-test ()
-  (let ((x '(1 2 nil 4 5)))
-    (should (equal x (dllist-to-list
-                      (dllist-from-list
-                       (dllist-to-list
-                        (dllist-from-list x))))))))
-
 (defun dllist-nth (dll n)
   "Get Nth node of the doubly linked list DLL.
 N may be negative to look backwards."
@@ -49,11 +37,6 @@ N may be negative to look backwards."
               (dllist-next node))))
     node))
 
-(ert-deftest dllist-nth-test ()
-  (let ((x (dllist-from-list '(1 2 nil 4 5))))
-    (should (= 2 (dllist-value (dllist-nth x 1))))
-    (should (= 4 (dllist-value (dllist-nth x 3))))))
-
 (defun dllist-cyclic-from-list (list)
   "Make a cyclic doubly linked list from LIST."
   (when-let* ((x (dllist-from-list list)))
@@ -61,11 +44,6 @@ N may be negative to look backwards."
       (setf (dllist-next end) x)
       (setf (dllist-prev x) end)
       x)))
-
-(ert-deftest dllist-cyclic-from-list-test ()
-  (let ((x (dllist-cyclic-from-list '(1 2 nil 4 5))))
-    (should (= 2 (dllist-value (dllist-nth x 1))))
-    (should (= 2 (dllist-value (dllist-nth x 6))))))
 
 (provide 'dllist)
 

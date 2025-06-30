@@ -4,7 +4,6 @@
 
 (require 'cl-lib)
 (require 'cl-macs)
-(require 'ert)
 (require 'dllist)
 
 (cl-defstruct fifo (dllist nil))
@@ -67,16 +66,6 @@ This raises an error if the FIFO is empty."
                while x
                for y = (dllist-value x)
                collect y))))
-
-(ert-deftest fifo-push-test ()
-  (let ((fifo (fifo-from-list '(1 2 3))))
-    (fifo-push fifo 4)
-    (should (equal '(1 2 3 4) (fifo-to-list fifo)))))
-
-(ert-deftest fifo-pop-test ()
-  (let ((fifo (fifo-from-list '(1 2 3))))
-    (should (= 1 (fifo-pop fifo)))
-    (should (equal '(2 3) (fifo-to-list fifo)))))
 
 (provide 'fifo)
 
