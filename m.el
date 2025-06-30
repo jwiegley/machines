@@ -163,7 +163,7 @@ stopped flag once this process has been performed."
 (defun m-stopped-p (machine)
   (m-check machine)
   (let ((x (flag-raised (machine-stopped machine))))
-    (m--debug "m-stopped-p %S: %S" (m-name machine) x)
+    ;; (m--debug "m-stopped-p %S: %S" (m-name machine) x)
     x))
 
 (defun m-stop (machine)
