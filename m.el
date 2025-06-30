@@ -79,20 +79,34 @@ stopped flag once this process has been performed."
 
 (defalias 'm-name #'machine-name)
 
+(defun m-check (machine)
+  (let ((flag (flag-raised (machine-stopped machine))))
+    (when (consp flag)
+      (m--debug "m-check..FAILED %S %S" (m-name machine) flag)
+      (signal (car flag) (cdr flag)))))
+
+(defun m-clear (machine)
+  (let ((flag (flag-raised (machine-stopped machine))))
+    (when (consp flag)
+      (setf (flag-raised (machine-stopped machine)) nil))))
+
 (defun m-send (machine value)
   "Send the VALUE to the given MACHINE."
+  (m-check machine)
   (m--debug "m-send..1 %S %S" (m-name machine) value)
   (ts-queue-push (machine-input machine) value)
   (m--debug "m-send..done %S %S" (m-name machine) value))
 
 (defun m-send-eof (machine)
   "Close the MACHINE's input queue."
+  (m-check machine)
   (m--debug "m-send-eof..1 %S" (m-name machine))
   (ts-queue-close (machine-input machine))
   (m--debug "m-send-eof..done %S" (m-name machine)))
 
 (defun m--next-input (machine)
   "Await the next results from the given MACHINE."
+  (m-check machine)
   (m--debug "m--next-input..1 %S" (m-name machine))
   (let ((x (ts-queue-pop (machine-input machine))))
     (m--debug "m--next-input..done %S %S" (m-name machine) x)
@@ -100,18 +114,21 @@ stopped flag once this process has been performed."
 
 (defun m-yield (machine x)
   "Await the next results from the given MACHINE."
+  (m-check machine)
   (m--debug "m-yield..1 %S" (m-name machine))
   (ts-queue-push (machine-output machine) x)
   (m--debug "m-yield..done %S" (m-name machine)))
 
 (defun m-yield-eof (machine)
   "Await the next results from the given MACHINE."
+  (m-check machine)
   (m--debug "m-yield-eof..1 %S" (m-name machine))
   (ts-queue-close (machine-output machine))
   (m--debug "m-yield-eof..done %S" (m-name machine)))
 
 (defun m-await (machine)
   "Await the next results from the given MACHINE."
+  (m-check machine)
   (m--debug "m-await..1 %S" (m-name machine))
   (let ((x (ts-queue-pop (machine-output machine))))
     (m--debug "m-await..done %S %S" (m-name machine) x)
@@ -119,6 +136,7 @@ stopped flag once this process has been performed."
 
 (defun m-peek (machine)
   "Await the next results from the given MACHINE."
+  (m-check machine)
   (m--debug "m-peek..1 %S" (m-name machine))
   (let ((x (ts-queue-peek (machine-output machine))))
     (m--debug "m-peek..done %S %S" (m-name machine) x)
@@ -126,6 +144,7 @@ stopped flag once this process has been performed."
 
 (defun m--drain-input (machine)
   "Drain the input of MACHINE into a list."
+  (m-check machine)
   (m--debug "m--drain-input..1 %S" (m-name machine))
   (let ((xs (m--drain-queue (machine-stopped machine)
                             (machine-input machine))))
@@ -134,6 +153,7 @@ stopped flag once this process has been performed."
 
 (defun m-drain (machine)
   "Drain the output of MACHINE into a list."
+  (m-check machine)
   (m--debug "m-drain..1 %S" (m-name machine))
   (let ((xs (m--drain-queue (machine-stopped machine)
                             (machine-output machine))))
@@ -141,12 +161,14 @@ stopped flag once this process has been performed."
     xs))
 
 (defun m-stopped-p (machine)
+  (m-check machine)
   (let ((x (flag-raised (machine-stopped machine))))
     (m--debug "m-stopped-p %S: %S" (m-name machine) x)
     x))
 
 (defun m-stop (machine)
   "Stop MACHINE, flushing any pending output first."
+  (m-check machine)
   (m--debug "m-stop..1 %S" (m-name machine))
   (unless (m-stopped-p machine)
     (m--debug "m-stop..2 %S" (m-name machine))
@@ -155,6 +177,7 @@ stopped flag once this process has been performed."
 
 (defun m-source (machine)
   "A source is a MACHINE that expects no input."
+  (m-check machine)
   (m--debug "m-source..1 %S" (m-name machine))
   (prog1
       machine
@@ -164,6 +187,7 @@ stopped flag once this process has been performed."
 
 (defun m-sink (machine)
   "A sink is a MACHINE that produces no output."
+  (m-check machine)
   (m--debug "m-sink..1 %S" (m-name machine))
   (prog1
       machine
@@ -190,6 +214,7 @@ This should only ever be called once, and will block until it sees the
 closure token, so only call this in conditions where you know exactly
 when to expect that the output is closed. Generally this is only useful
 for testing."
+  (m-check machine)
   (m--debug "m-output-closed-p..1 %s" (m-name machine))
   (ts-queue-closed-p (machine-output machine)))
 
@@ -228,19 +253,23 @@ OUTPUT-SIZE is the output queue size, if OUTPUT is nil."
          (thread
           (make-thread #'(lambda ()
                            (m--debug "%s..before" name)
-                           (funcall func m)
+                           (condition-case e
+                               (funcall func m)
+                             (t
+                              (m--debug "%s..error: %S" name e)
+                              (setf (flag-raised stopped) e)))
                            (m--debug "%s..done" name))
                        name)))
     (setf (machine-thread m) thread)
     (setf (machine-stop m)
           #'(lambda (m)
-              (unless (flag-raised stopped)
-                (m--debug "stop:%s..1" name)
-                (when stop
-                  (m--debug "stop:%s..2" name)
-                  (funcall stop m))
-                (m--debug "stop:%s..3" name)
+              (m--debug "stop:%s..1" name)
+              (when stop
+                (m--debug "stop:%s..2" name)
+                (funcall stop m))
+              (m--debug "stop:%s..3" name)
 
+              (unless (flag-raised stopped)
                 (m--debug "stop:%s..4" name)
                 (setf (flag-raised stopped) t)
                 (m--debug "stop:%s..5" name)
@@ -282,6 +311,7 @@ OUTPUT-SIZE is the output queue size, if OUTPUT is nil."
     ;; m-from-list
     ;; m-from-list-iter
     ;; m-funcall
+    ;; m-funcall-bad
     ;; m-generator
     ;; m-head
     ;; m-identity
@@ -784,6 +814,16 @@ FUNC."
     (m-send-eof m)
     (should (= 6 (m-await m)))
     (should (m-output-closed-p m))
+    (m-stop m)))
+
+(m--test m-funcall-bad
+  (let ((m (m-funcall #'+++ :combine (apply-partially #'cl-reduce #'+))))
+    (m-send m 1)
+    (m-send m 2)
+    (m-send m 3)
+    (m-send-eof m)
+    (should-error (= 6 (m-await m)) :type 'void-function)
+    (m-clear m)
     (m-stop m)))
 
 (defun m-process (program &rest program-args)
