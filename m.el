@@ -15,7 +15,10 @@ It should either be non-nil for active, or nil for inactive."
   name raised)
 
 (defsubst m--debug (&rest args)
-  (when ts-queue-debug (apply #'message args))
+  (when ts-queue-debug
+    (with-current-buffer (get-buffer-create "*m-log*")
+      (insert (apply #'format args) ?\n)
+      (pop-to-buffer (current-buffer))))
   (when-let* ((err (thread-last-error t)))
     (message "Thread raised error: %S" err)
     (signal 'thread-killed nil)))
