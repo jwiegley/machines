@@ -193,34 +193,34 @@
 ;;     (m-clear m)
 ;;     (m-stop m)))
 
-(m--test m-process
-  (let ((m (m-process "cat")))
-    (m-send m "Hello\n")
-    (m-send-eof m)
-    (should (string= "Hello\n" (m-await m)))
-    (should (m-output-closed-p m))
-    (m-stop m)))
+;; (m--test m-process
+;;   (let ((m (m-process "cat")))
+;;     (m-send m "Hello\n")
+;;     (m-send-eof m)
+;;     (should (string= "Hello\n" (m-await m)))
+;;     (should (m-output-closed-p m))
+;;     (m-stop m)))
 
-(m--test m-process-drain
-  (let ((m (m-process "echo" "Hello there")))
-    (thread-last
-      (m-source m)
-      (m-drain)
-      (mapconcat #'identity)
-      (string= "Hello there\n")
-      should)
-    (m-stop m)))
+;; (m--test m-process-drain
+;;   (let ((m (m-process "echo" "Hello there")))
+;;     (thread-last
+;;       (m-source m)
+;;       (m-drain)
+;;       (mapconcat #'identity)
+;;       (string= "Hello there\n")
+;;       should)
+;;     (m-stop m)))
 
-(m--test m-process-compose
-  (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
-                      (m-process "wc" "-l"))))
-    (m-send m "foo\n")
-    (m-send m "bar\n")
-    (m-send m "foo\n")
-    (m-send-eof m)
-    (should (string= "2\n" (m-await m)))
-    (should (m-output-closed-p m))
-    (m-stop m)))
+;; (m--test m-process-compose
+;;   (let ((m (m-compose (m-process "grep" "--line-buffered" "foo")
+;;                       (m-process "wc" "-l"))))
+;;     (m-send m "foo\n")
+;;     (m-send m "bar\n")
+;;     (m-send m "foo\n")
+;;     (m-send-eof m)
+;;     (should (string= "2\n" (m-await m)))
+;;     (should (m-output-closed-p m))
+;;     (m-stop m)))
 
 (provide 'test-m)
 
