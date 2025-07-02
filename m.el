@@ -270,29 +270,33 @@ OUTPUT-SIZE is the output queue size, if OUTPUT is nil."
               (when stop
                 (m--debug "stop:%s..2" name)
                 (funcall stop m))
-              (m--debug "stop:%s..3" name)
 
+              (m--debug "stop:%s..3" name)
               (unless (flag-raised stopped)
                 (m--debug "stop:%s..4" name)
                 (setf (flag-raised stopped) t)
-                (m--debug "stop:%s..5" name)
+
                 ;; Send an EOF into our own input channel, just in case the
                 ;; worker thread is block on a a condition variable awaiting
                 ;; an input.
+                (m--debug "stop:%s..5" name)
                 (when input
                   (m--debug "stop:%s..6" name)
                   (m-send-eof m))
-                (m--debug "stop:%s..7" name)
+
                 ;; Drain any output, in case it is blocked waiting to write to
                 ;; the outbound queue.
+                (m--debug "stop:%s..7" name)
                 (when (car (m-peek m))
                   (m--debug "stop:%s..8" name)
                   (m-yield-eof m)
                   (ignore (m-drain m)))
+
                 (m--debug "stop:%s..9" name)
                 (when (thread-live-p thread)
                   (m--debug "stop:%s..10" name)
                   (thread-join thread))
+
                 (m--debug "stop:%s..done" name))))
     m))
 
