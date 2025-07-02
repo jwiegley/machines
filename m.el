@@ -649,10 +649,8 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
             (while (and (not completed)
                         (not (m-stopped-p m)))
               (m--debug "m-process..11 %S" name)
-              (thread-yield)
-              (m--debug "m-process..12 %S" name)
               (accept-process-output proc nil 100)
-              (m--debug "m-process..13 %S" name)))))))
+              (m--debug "m-process..12 %S" name)))))))
 
 (provide 'm)
 
