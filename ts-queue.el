@@ -28,8 +28,7 @@
 (defvar ts-queue-debug nil)
 
 (defsubst ts-queue--debug (&rest args)
-  (when ts-queue-debug (apply #'message args))
-  (should (null (thread-last-error t))))
+  (when ts-queue-debug (apply #'message args)))
 
 (defun ts-queue-push (queue elem)
   (ts-queue--debug "ts-queue-push..1 %S %S" (ts-queue-name queue) elem)
