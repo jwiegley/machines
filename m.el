@@ -23,12 +23,12 @@ It should either be non-nil for active, or nil for inactive."
     (message "Thread raised error: %S" err)
     (signal 'thread-killed nil)))
 
-(defun m--drain-queue (stopped input)
+(defun m--drain-queue (stopped-flag input-queue)
   "Drain the INPUT queue and return the list of its values."
-  (m--debug "m--drain-queue..1 %S" (ts-queue-name input))
-  (cl-loop for x = (ts-queue-pop input)
+  (m--debug "m--drain-queue..1 %S" (ts-queue-name input-queue))
+  (cl-loop for x = (ts-queue-pop input-queue)
            until (or (ts-queue-at-eof x)
-                     (flag-raised stopped))
+                     (flag-raised stopped-flag))
            collect x))
 
 (cl-defun m--connect-queues (input output stopped &key func pred)
