@@ -40,6 +40,7 @@
     (let ((test-name (concat (symbol-name sym) "-test")))
       `(ert-deftest ,(intern test-name) ()
          (message ,(concat test-name "..."))
+         (sit-for 0)
          (let ((threads (all-threads))
                (procs (process-list)))
            (setq ts-queue-debug ,(not (null m--test-include)))
