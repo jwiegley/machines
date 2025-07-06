@@ -97,7 +97,9 @@ stopped flag once this process has been performed."
   "Send the VALUE to the given MACHINE."
   (m-check machine)
   (m--debug "m-send..1 %S %S" (m-name machine) value)
-  (ts-queue-push (machine-input machine) value)
+  (if (machine-input machine)
+      (ts-queue-push (machine-input machine) value)
+    (error "Machine is a source and does not accept input"))
   (m--debug "m-send..done %S %S" (m-name machine) value))
 
 (defun m-send-eof (machine)
