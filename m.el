@@ -307,7 +307,7 @@ OUTPUT-SIZE is the output queue size, if OUTPUT is nil."
         (m--connect-queues (machine-input m) (machine-output m)
                            (machine-stopped m)))))
 
-(defun m-compose (left right)
+(defun m-compose! (left right)
   "Compose the LEFT machine with the RIGHT.
 This composes in the reverse order to mathematical composition: the left
 machine acts on the inputs coming into the composed machine, and then
@@ -317,27 +317,10 @@ This operation follows monoidal laws with respect to `m-identity',
 making this a cartesian closed category of connected streaming machines."
   (let ((name (format "m-compose %s %s"
                       (m-name left) (m-name right))))
+    ;; Drop the left machine's output queue
+    (setf (machine-output left) (machine-input right))
     (m-basic-machine name
-      #'(lambda (m)
-          (cl-loop
-           for x = (progn
-                     (m--debug "m-compose..3 %S" name)
-                     (m-await left))
-           until   (progn
-                     (m--debug "m-compose..5 %S %S %S"
-                               name x (m-stopped-p m))
-                     (or (m-eof-p x)
-                         (m-stopped-p m)))
-           do      (progn
-                     (m--debug "m-compose..6 %S" name)
-                     (m-send right x)
-                     (m--debug "m-compose..7 %S" name))
-           finally (progn
-                     (m--debug "m-compose..8 %S" name)
-                     (m-send-eof right)
-                     (m--debug "m-compose..9 %S" name)
-                     (m-stop left)
-                     (m--debug "m-compose..10 %S" name))))
+      #'ignore
       :stop #'(lambda (_m)
                 (m--debug "m-compose:stop..1 %S" name)
                 (m-stop left)
@@ -347,8 +330,8 @@ making this a cartesian closed category of connected streaming machines."
       :input (machine-input left)
       :output (machine-output right))))
 
-(defalias 'm-connect 'm-compose)
-(defalias 'm->> 'm-compose)
+(defalias 'm-connect! 'm-compose!)
+(defalias 'm->> 'm-compose!)
 
 (defun m-iterator (iter)
   (m-basic-machine "m-iterator"
@@ -546,7 +529,7 @@ decide whether two of the same answer in a row indicates completion."
                   1))))
 
 (defun m-series (left right)
-  "Like `m-compose', but RIGHT is not sent input until LEFT is finished.")
+  "Like `m-compose!', but RIGHT is not sent input until LEFT is finished.")
 
 (defun m-mapreduce (reduction &rest machines))
 
@@ -564,48 +547,53 @@ decide whether two of the same answer in a row indicates completion."
            finally (m-stop machine)))
 
 (defun m-map (func machine)
-  (let ((name (format "m-map %s" (m-name machine))))
-    (m-basic-machine name
-      #'(lambda (m)
-          (m--debug "m-map..1 %S" name)
-          (m--connect-queues (machine-output machine) (machine-output m)
-                             (machine-stopped m) :func func)
-          (m--debug "m-map..2 %S" name)
-          (m-stop machine)
-          (m--debug "m-map..done %S" name)
-          )
-      :stop #'(lambda (_m) (m-stop machine))
-      :input (machine-input machine))))
+  (if (and (functionp func)
+           (= 1 (car (func-arity func))))
+      (let ((name (format "m-map %s" (m-name machine))))
+        (m-basic-machine name
+          #'(lambda (m)
+              (m--debug "m-map..1 %S" name)
+              (m--connect-queues (machine-output machine) (machine-output m)
+                                 (machine-stopped m) :func func)
+              (m--debug "m-map..2 %S" name)
+              (m-stop machine)
+              (m--debug "m-map..done %S" name)
+              )
+          :stop #'(lambda (_m) (m-stop machine))
+          :input (machine-input machine)))
+    (error "m-map: FUNC must be a valid function with minimum arity 1")))
 
 (defun m-filter (func machine)
-  (let ((name (format "m-filter %s" (m-name machine))))
-    (m-basic-machine name
-      #'(lambda (m)
-          (m--debug "m-filter..1 %S" name)
-          (m--connect-queues (machine-output machine) (machine-output m)
-                             (machine-stopped m) :pred func)
-          (m--debug "m-filter..2 %S" name)
-          (m-stop machine)
-          (m--debug "m-filter..done %S" name)
-          )
-      :stop #'(lambda (_m) (m-stop machine))
-      :input (machine-input machine))))
+  (if (and (functionp func)
+           (= 1 (car (func-arity func))))
+      (let ((name (format "m-filter %s" (m-name machine))))
+        (m-basic-machine name
+          #'(lambda (m)
+              (m--debug "m-filter..1 %S" name)
+              (m--connect-queues (machine-output machine) (machine-output m)
+                                 (machine-stopped m) :pred func)
+              (m--debug "m-filter..2 %S" name)
+              (m-stop machine)
+              (m--debug "m-filter..done %S" name)
+              )
+          :stop #'(lambda (_m) (m-stop machine))
+          :input (machine-input machine)))
+    (error "m-filter: FUNC must be a valid function with minimum arity 1")))
 
 ;;; Example machines
 
-(cl-defun m-funcall (func &key (combine #'identity))
+(cl-defun m-funcall (func)
   "Turn the function FUNC into a machine.
-Since machine might receive their input piece-wise, the caller must
-specify a function to COMBINE a list of input into a final input for
-FUNC."
-  (m-basic-machine "m-funcall"
-    #'(lambda (m)
-        (thread-last
-          (m--drain-input m)
-          (funcall combine)
-          (funcall func)
-          (m-yield m))
-        (m-yield-eof m))))
+The function receives all of inputs given as separate arguments."
+  (if (functionp func)
+      (m-basic-machine "m-funcall"
+        #'(lambda (m)
+            (thread-last
+              (m--drain-input m)
+              (apply func)
+              (m-yield m))
+            (m-yield-eof m)))
+    (error "m-funcall: FUNC must be a valid function")))
 
 (defun m-process (program &rest program-args)
   "Create a machine from a process. See `start-process' for details.
