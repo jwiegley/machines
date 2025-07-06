@@ -1,4 +1,4 @@
-;;; dllist --- Doubly-linked Lists -*- lexical-binding: t -*-
+;;; dllist.el --- Doubly-linked Lists -*- lexical-binding: t -*-
 
 ;; From https://gist.github.com/jordonbiondo/d3679eafbe9e99a5dff1
 

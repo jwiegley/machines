@@ -10,7 +10,7 @@
 
 (defvar m--test-include
   '(
-    ;; m-compose-identities
+    ;; m-compose!-identities
     ;; m-drop
     ;; m-fibonacci
     ;; m-fibonacci-iter

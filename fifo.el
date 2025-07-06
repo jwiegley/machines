@@ -1,4 +1,4 @@
-;;; fifo --- First-In First-Out queue -*- lexical-binding: t -*-
+;;; fifo.el --- First-In First-Out queue -*- lexical-binding: t -*-
 
 ;; From https://gist.github.com/jordonbiondo/d3679eafbe9e99a5dff1
 

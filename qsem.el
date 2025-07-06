@@ -1,10 +1,6 @@
-;;; qsem --- Quantified (counting) semaphores -*- lexical-binding: t -*-
-
-;; Based on https://gist.github.com/jordonbiondo/d3679eafbe9e99a5dff1 and
-;; queue.el in ELPA
+;;; qsem.el --- Quantified (counting) semaphores -*- lexical-binding: t -*-
 
 (require 'cl-lib)
-(require 'cl-macs)
 
 (cl-defstruct (qsem
                (:copier nil)

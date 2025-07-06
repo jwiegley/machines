@@ -1,4 +1,4 @@
-;;; ts-queue --- Thread-safe O(1) queues -*- lexical-binding: t -*-
+;;; ts-queue.el --- Thread-safe O(1) queues -*- lexical-binding: t -*-
 
 ;; Based on https://gist.github.com/jordonbiondo/d3679eafbe9e99a5dff1 and
 ;; queue.el in ELPA
