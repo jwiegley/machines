@@ -14,7 +14,7 @@
 (require 'ts-queue)
 
 ;; ----------------------------------------------------------------------------
-(defclass actor()
+(defclass actor ()
   ((name :initarg :name
          :initform (error ":name must be specified")
          :accessor name
@@ -31,48 +31,38 @@
 ;; ----------------------------------------------------------------------------
 (cl-defmethod initialize-instance :after ((self actor) &optional slots)
   "Uses the main functiona name to create a thread."
-  (message "initialize-instance..1")
   (with-slots (name thread messages) self
     (setf messages (ts-queue-create))
     (setf thread (make-thread #'(lambda() (main self)) name))))
 
-(cl-defmethod send ((self actor) &rest message)
+(cl-defmethod send ((self actor) &rest xs)
   "Creates a message sending thread which
 1. Holds lock to the message (queue)
 2. Appends messages (queue) with incoming message
 3. Releases lock
 4. Notifies the waiting thread that there is a message"
-  (message "send..1 %S" message)
   (with-slots (messages) self
-    (make-thread #'(lambda ()
-                     (message "send:thread..1")
-                     (ts-queue-push messages message)))
+    (make-thread #'(lambda () (ts-queue-push messages xs)))
     (cl-values)))
 
 (cl-defmethod close-actor ((self actor))
-  (message "close-actor..1")
   (with-slots (messages) self
-    (make-thread #'(lambda ()
-                     (message "close-actor:thread..1")
-                     (ts-queue-close messages)))
+    (make-thread #'(lambda () (ts-queue-close messages)))
     (cl-values)))
 
 (cl-defmethod cancel-actor ((self actor))
   "Cancels the actor thread, stopping it immediately with a signal."
-  (message "cancel-actor..1")
   (with-slots (thread) self
     (thread-signal thread 'canceled nil)))
 
 (cl-defmethod stop-actor ((self actor))
   "Stops the actor thread by sending it a closed input signal."
-  (message "stop-actor..1")
   (close-actor self)
   (with-slots (thread) self
     (thread-join thread)))
 
 (cl-defmethod get-thread ((self actor))
   "Returns the handle of a thread"
-  (message "get-thread..1")
   (with-slots (thread) self thread))
 
 ;; ----------------------------------------------------------------------------
@@ -80,80 +70,82 @@
   "The main which is started as a thread from the constructor I think that
 this should be more of an internal function than a method (experiment
 with funcallable-standard-class)."
-  (message "main..1")
   (with-slots ((behav behavior) messages) self
     (cl-loop while behav
-             for x = (progn (message "main:loop..1")
-                            (thread-yield)
-                            (ts-queue-pop messages))
+             for x = (progn
+                       (thread-yield)
+                       (ts-queue-pop messages))
              until (ts-queue-at-eof x)
              do (setf behav (apply behav x)))))
 
-(defmacro behav (state vars &body body)
+(cl-defmacro actor-lambda (state vars &body body)
   "Create a behavior that can be attached to any actor."
-  (message "behav..1")
+  (declare (indent 2))
   `(let ,state
-     (cl-labels ((me ,(append vars `(&key self  (next #'me next-supplied-p)))
-                   (setf next (curry next :self self))
-                   x   ,@body))
+     (cl-labels ((me ,(append vars '(&key self (next #'me next-supplied-p)))
+                   (if next-supplied-p
+                       (setf next (curry next :self self)))
+                   ,@body))
        #'me)))
 
 (cl-defmacro defactor (name state vars &body body)
   "Macro for creating actors with the behavior specified by body."
   (declare (indent 3))
   `(cl-defun ,name (&key (self) ,@state)
-     (cl-labels ((me ,(append vars `(&key (next #'me next-supplied-p)))
+     (cl-labels ((me ,(append vars '(&key (next #'me next-supplied-p)))
                    (if next-supplied-p
                        (setf next (curry next :self self)))
                    ,@body))
-       (setf self (make-actor #'me ,(symbol-name name))) self)))
+       (setf self (make-actor #'me ,(symbol-name name)))
+       self)))
 
 (defun make-actor (behav name)
-  (message "make-actor..1")
   (make-instance 'actor
                  :name (cl-concatenate 'string "Actor: " name)
                  :behavior behav))
 
-(defun if-single (x)
-  (if (eq (length x) 1)
-      (car x)
-    x))
-
-(defun sink (&rest _args)
-  #'sink)
+(defun sink (&rest _args) #'sink)
 
 (defun curry (f &rest args)
   #'(lambda (&rest rem) (apply f (append rem args))))
 
-(defactor printer () (x)
-  (message "printer: %S" x)
+(defactor printer1 () (x)
+  (message "printer1: %S" x)
+  next)
+
+(defactor printer2 () (x)
+  (message "printer2: %S" x)
   next)
 
 (defun actor-test ()
-  (let ((my-actor (printer)))
-    (thread-yield)
-    (message "%S" (thread-last-error t))
-    (send my-actor 1)
-    (thread-yield)
-    (message "%S" (thread-last-error t))
-    (send my-actor 2)
-    (thread-yield)
-    (message "%S" (thread-last-error t))
-    (send my-actor 3)
-    (thread-yield)
-    (message "%S" (thread-last-error t))
-    (let ((result (stop-actor my-actor)))
-      (message "Actor stopped: %S" result)
-      result)))
-
-(defun run-actor ()
-  (interactive)
-  (let ((thread (make-thread #'(lambda () (actor-test))))
-        (countdown 3000))
-    (while (and (thread-live-p thread)
-                (> 0 (setq countdown (1- countdown))))
-      (thread-yield)
-      (sit-for 0.01))))
+  (let ((my-actor1 (printer1))
+        (my-actor2 (printer2)))
+    (when-let ((err (thread-last-error t)))
+      (message "step 1: %S" err))
+    (send my-actor1 1)
+    (when-let ((err (thread-last-error t)))
+      (message "step 2: %S" err))
+    (let ((me2 (actor-lambda () (x)
+                 (message "me2...")
+                 (send my-actor2 (* x 10))
+                 next)))
+      (send my-actor1 2 :next me2))
+    (when-let ((err (thread-last-error t)))
+      (message "step 3: %S" err))
+    (send my-actor1 3)
+    (when-let ((err (thread-last-error t)))
+      (message "step 4: %S" err))
+    (send my-actor1 4)
+    (when-let ((err (thread-last-error t)))
+      (message "step 5: %S" err))
+    (send my-actor1 5)
+    (when-let ((err (thread-last-error t)))
+      (message "step 6: %S" err))
+    (let ((result1 (stop-actor my-actor1))
+          (result2 (stop-actor my-actor2)))
+      (message "Actor1 stopped: %S" result1)
+      (message "Actor2 stopped: %S" result2)
+      (cons result1 result2))))
 
 (provide 'actor)
 
