@@ -12,17 +12,19 @@
     (ts-queue
      (:copier nil)
      (:constructor nil)
-     (:constructor ts-queue-create
-                   (&key
-                    (name "queue")
-                    (mutex (make-mutex name))
-                    (pushed (make-condition-variable mutex name))
-                    (fifo (make-fifo))
-                    (size 256)
-                    &aux
-                    (slots (qsem-new :name name
-                                     :size size
-                                     :avail (- size (fifo-length fifo)))))))
+     (:constructor
+      ts-queue-create
+      (&key
+       (name "queue")
+       (mutex (make-mutex name))
+       (pushed (make-condition-variable mutex name))
+       (fifo (make-fifo))
+       (size 256)
+       &aux
+       (slots (and size
+                   (qsem-new :name name
+                             :size size
+                             :avail (- size (fifo-length fifo))))))))
   name mutex pushed fifo slots)
 
 (defvar ts-queue-debug nil)
@@ -32,8 +34,9 @@
 
 (defun ts-queue-push (queue elem)
   (ts-queue--debug "ts-queue-push..1 %S %S" (ts-queue-name queue) elem)
-  (unless (eq elem :ts-queue--eof)
-    (qsem-acquire (ts-queue-slots queue)))
+  (when (ts-queue-slots queue)
+    (unless (eq elem :ts-queue--eof)
+      (qsem-acquire (ts-queue-slots queue))))
   (ts-queue--debug "ts-queue-push..2 %S %S" (ts-queue-name queue) elem)
   (with-mutex (ts-queue-mutex queue)
     (fifo-push (ts-queue-fifo queue) elem)
@@ -57,13 +60,15 @@
     (while (fifo-empty-p (ts-queue-fifo queue))
       (ts-queue--debug "ts-queue-pop..3 %S, slots available = %S"
                        (ts-queue-name queue)
-                       (qsem-avail (ts-queue-slots queue)))
+                       (and (ts-queue-slots queue)
+                            (qsem-avail (ts-queue-slots queue))))
       (condition-wait (ts-queue-pushed queue)))
     (ts-queue--debug "ts-queue-pop..4 %S" (ts-queue-name queue))
     (prog1
         (fifo-pop (ts-queue-fifo queue))
       (ts-queue--debug "ts-queue-pop..5 %S" (ts-queue-name queue))
-      (qsem-release (ts-queue-slots queue))
+      (when (ts-queue-slots queue)
+        (qsem-release (ts-queue-slots queue)))
       (ts-queue--debug "ts-queue-pop..done %S" (ts-queue-name queue)))))
 
 (defun ts-queue-peek (queue)
