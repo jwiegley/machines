@@ -43,6 +43,7 @@
     (ts-queue--debug "ts-queue-push..4 %S %S" (ts-queue-name queue) elem)
     (condition-notify (ts-queue-pushed queue) t)
     (ts-queue--debug "ts-queue-push..5 %S %S" (ts-queue-name queue) elem))
+  (ts-queue--debug "ts-queue-push..6 %S %S" (ts-queue-name queue) elem)
   (thread-yield)
   (ts-queue--debug "ts-queue-push..done %S %S" (ts-queue-name queue) elem))
 

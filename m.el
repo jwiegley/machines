@@ -15,10 +15,7 @@ It should either be non-nil for active, or nil for inactive."
   name raised)
 
 (defsubst m--debug (&rest args)
-  (when ts-queue-debug
-    (with-current-buffer (get-buffer-create "*m-log*")
-      (insert (apply #'format args) ?\n)
-      (pop-to-buffer (current-buffer))))
+  (when ts-queue-debug (apply #'message args))
   (when-let* ((err (thread-last-error t)))
     (message "Thread raised error: %S" err)
     (signal 'thread-killed nil)))
@@ -616,9 +613,9 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
                                )
                    :sentinel #'(lambda (_proc event)
                                  (m--debug "m-process..3 %S %S" name event)
-                                 (m-yield-eof m)
+                                 (setq completed t)
                                  (m--debug "m-process..4 %S" name)
-                                 (setq completed t)))))
+                                 (m-yield-eof m)))))
             (setf (machine-resource m) proc)
 
             (m--debug "m-process..5 %S" name)
@@ -643,8 +640,10 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
             (while (and (not completed)
                         (not (m-stopped-p m)))
               (m--debug "m-process..11 %S" name)
+              (thread-yield)
+              (m--debug "m-process..12 %S" name)
               (accept-process-output proc nil 100)
-              (m--debug "m-process..12 %S" name)))))))
+              (m--debug "m-process..13 %S" name)))))))
 
 (provide 'm)
 
