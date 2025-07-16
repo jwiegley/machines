@@ -625,25 +625,28 @@ The PROGRAM and PROGRAM-ARGS are used to start the process."
                          (m--next-input m))
              until     (progn
                          (m--debug "m-process..7 %S %S" name str)
-                         (or (not (process-live-p proc))
-                             (m-eof-p str)
-                             (m-stopped-p m)))
+                         (or (m-eof-p str)
+                             completed
+                             (m-stopped-p m)
+                             (not (process-live-p proc))))
              do        (progn
                          (m--debug "m-process..8 %S %S" name str)
                          (process-send-string proc str))
              finally   (progn
                          (m--debug "m-process..9 %S" name)
                          (when (process-live-p proc)
-                           (process-send-eof proc))))
+                           (ignore-errors
+                             (process-send-eof proc)))))
 
             (m--debug "m-process..10 %S" name)
-            (while (and (not completed)
-                        (not (m-stopped-p m)))
-              (m--debug "m-process..11 %S" name)
-              (thread-yield)
-              (m--debug "m-process..12 %S" name)
-              (accept-process-output proc nil 100)
-              (m--debug "m-process..13 %S" name)))))))
+            (catch 'done
+              (while (accept-process-output proc nil 100)
+                (m--debug "m-process..11 %S" name)
+                (thread-yield)
+                (m--debug "m-process..12 %S" name)
+                (if (or completed (m-stopped-p m))
+                    (throw 'done t))
+                (m--debug "m-process..13 %S" name))))))))
 
 (provide 'm)
 
